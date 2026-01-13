@@ -1,0 +1,79 @@
+DESCRIPTION = "ARM Trusted Firmware"
+
+LICENSE = "BSD-3-Clause"
+LIC_FILES_CHKSUM = "file://license.rst;md5=1dd070c98a281d18d9eefd938729b031"
+
+COMPATIBLE_MACHINE = "ironhide"
+PACKAGE_ARCH = "${MACHINE_ARCH}"
+
+inherit deploy
+
+PV:rcar-gen5:ironhide = "v2.14.0+upstream+git${SRCPV}"
+BRANCH:rcar-gen5:ironhide = "master"
+SRC_URI = "git://github.com/ARM-software/arm-trusted-firmware.git;branch=${BRANCH};protocol=https"
+SRCREV:rcar-gen5:ironhide = "ea6625c639011747bf49ab2afc0ff4152320c4c3"
+
+S = "${WORKDIR}/git"
+
+CLEAN_OPT:rcar-gen5 = "clean_srecord"
+BUILD_OPT:rcar-gen5 = "bl31 rcar_srecord"
+PLATFORM:rcar-gen5 = "rcar_gen5"
+
+ATFW_OPT ?= ""
+ATFW_CONF ?= ""
+
+ironhide_r8a78000[default] = "LSI=X5H CTX_INCLUDE_AARCH32_REGS=0 MBEDTLS_COMMON_MK=1 PTP_NONSECURE_ACCESS=1 LOG_LEVEL=20 DEBUG=0 ENABLE_ASSERTIONS=0 E=0"
+
+# requires CROSS_COMPILE set by hand as there is no configure script
+export CROSS_COMPILE="${TARGET_PREFIX}"
+
+# Let the Makefile handle setting up the CFLAGS and LDFLAGS as it is a standalone application
+CFLAGS[unexport] = "1"
+LDFLAGS[unexport] = "1"
+AS[unexport] = "1"
+LD[unexport] = "1"
+
+# do_install() nothing
+do_install[noexec] = "1"
+
+do_ipl_compile () {
+    oe_runmake distclean
+    oe_runmake ${CLEAN_OPT} PLAT=${PLATFORM} SPD=none MBEDTLS_COMMON_MK=1 ${ATFW_OPT}
+    oe_runmake ${BUILD_OPT} PLAT=${PLATFORM} SPD=none MBEDTLS_COMMON_MK=1 ${ATFW_OPT}
+
+    # Create ${S}/release folder to store output for compile tasks
+    install -d ${S}/release
+
+    # Move to ${S}/release and rename
+    install ${S}/build/${PLATFORM}/release/bl31/bl31.elf                ${S}/release/bl31-${MACHINE}${ATFW_CONF}.elf
+    install ${S}/build/${PLATFORM}/release/bl31.bin                     ${S}/release/bl31-${MACHINE}${ATFW_CONF}.bin
+    install ${S}/build/${PLATFORM}/release/bl31.srec                    ${S}/release/bl31-${MACHINE}${ATFW_CONF}.srec
+}
+
+python do_compile () {
+    soc = d.getVar('SOC_FAMILY')
+    soc = soc.split(':')[1]
+    print(soc)
+    machine = d.getVar('MACHINE_ARCH')
+    print(machine)
+    confs_dict = d.getVarFlags(machine + "_" + soc)
+    print(confs_dict)
+    confs_list = list(confs_dict.keys())
+
+    for conf in confs_list:
+        d.setVar('ATFW_OPT', confs_dict[conf])
+        if conf == "default":
+            d.setVar('ATFW_CONF', "")
+        else:
+            d.setVar('ATFW_CONF', "-" + conf)
+        bb.build.exec_func('do_ipl_compile', d)
+}
+
+do_deploy () {
+    # Copy binary files to deploy directory
+    install -m 0644 ${S}/release/*.elf  ${DEPLOYDIR}
+    install -m 0644 ${S}/release/*.bin  ${DEPLOYDIR}
+    install -m 0644 ${S}/release/*.srec ${DEPLOYDIR}
+}
+
+addtask deploy after do_compile
