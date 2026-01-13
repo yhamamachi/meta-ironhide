@@ -14,7 +14,7 @@ CVE_PRODUCT ?= ""
 require recipes-kernel/linux/kernel_6.18.inc
 COMPATIBLE_MACHINE = "(rcar-gen5)"
 
-# nooelint; oelint.vars.mispell.unknown - Yocto variable
+# nooelint: oelint.vars.mispell.unknown - Yocto variable
 KCONFIG_MODE = "alldefconfig"
 # nooelint: oelint.vars.mispell.unknown
 KBUILD_DEFCONFIG:ironhide = "renesas_defconfig"
@@ -23,7 +23,7 @@ SRC_URI = "${REPO};branch=${BRANCH};protocol=https"
 SRC_URI:append:ironhide = " \
     file://ironhide.cfg \
 "
-S = "${WORKDIR}/git"
+S = "${UNPACKDIR}/git"
 
 BBCLASSEXTEND = ""
 
