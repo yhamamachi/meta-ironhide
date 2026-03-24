@@ -23,7 +23,6 @@ SRC_URI = "${REPO};branch=${BRANCH};protocol=https"
 SRC_URI:append:ironhide = " \
     file://ironhide.cfg \
 "
-S = "${UNPACKDIR}/git"
 
 BBCLASSEXTEND = ""
 
