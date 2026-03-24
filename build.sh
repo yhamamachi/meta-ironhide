@@ -64,6 +64,7 @@ fi
 cd $WORK
 git clone git://git.yoctoproject.org/poky
 git clone git://git.openembedded.org/meta-openembedded
+git clone git://git.yoctoproject.org/meta-arm
 if [[ "${IS_BUILD_INSIDE_REPO}" == "yes" ]]; then
     rm -f meta-${MACHINE}
     ln -sfd ${SCRIPT_DIR} meta-${MACHINE}
@@ -73,6 +74,7 @@ fi
 
 git -C poky checkout -B scarthgap origin/scarthgap
 git -C meta-openembedded checkout -B scarthgap origin/scarthgap
+git -C meta-arm checkout -B scarthgap origin/scarthgap
 if [[ "${IS_BUILD_INSIDE_REPO}" == "no" ]]; then
     git -C meta-${MACHINE} checkout -B scarthgap origin/scarthgap-dev
 fi
