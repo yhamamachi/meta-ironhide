@@ -18,7 +18,7 @@ inherit deploy
 PV:rcar-gen5:ironhide = "v2.16.0+upstream+git${SRCPV}"
 BRANCH:rcar-gen5:ironhide = "renesas"
 SRC_URI = "gitsm://gitlab.arm.com/clegoffic/SCP-firmware.git;branch=${BRANCH};protocol=https"
-SRCREV:rcar-gen5:ironhide = "4692513a71840034c62fd013ef75f630fd49e187"
+SRCREV:rcar-gen5:ironhide = "b24b9be156fa6c12cc9727e81a2dc151b2712085"
 TARGET_PRODUCT:rcar-gen5:ironhide = "rcar5"
 
 S = "${WORKDIR}/git"
