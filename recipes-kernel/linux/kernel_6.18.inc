@@ -1,6 +1,6 @@
 
-LINUX_VERSION = "6.18.44"
+LINUX_VERSION = "6.18.49"
 REPO = "git://github.com/morimoto/linux.git"
-BRANCH = "renesas-lts/v6.18.44-2026-08-24-x5h-ironhide"
-SRCREV = "756434ff51a87a9fe14f7219f48c02844afcc1fe"
+BRANCH = "renesas-lts/v6.18.49-2026-09-11-x5h-ironhide"
+SRCREV = "64c3e99fe69284ed43c00c62432fd139f0e4c3b6"
 
