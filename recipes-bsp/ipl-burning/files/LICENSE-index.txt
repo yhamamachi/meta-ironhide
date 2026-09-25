@@ -1,0 +1,13 @@
+
+- burn.py, run.sh, run.bat, burn.py
+  License: MIT
+  LicensePath: ./License/LICENSE.MIT
+
+- u-boot-elf-cm33-ironhide*(U-boot)
+  License: GPL-2.0-or-later
+  LicensePath: ./License/u-boot-cm33_licenses/*
+
+- python-embed-amd64
+  License: PSF License
+  License Text: ./python-embed-amd64/LICENSE.txt
+
