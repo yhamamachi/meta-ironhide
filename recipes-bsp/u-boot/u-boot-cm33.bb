@@ -73,6 +73,11 @@ do_deploy() {
         cp -f ${UBOOT_SREC_IMAGE} ${UBOOT_SREC_IMAGE_FOR_SCIF_DL_MODE}
         sed -i ${UBOOT_SREC_IMAGE_FOR_SCIF_DL_MODE} \
             -e "1a S30D1840201000004118000006000B"
+        # Generate binary file
+        rm -f u-boot-elf-cm33-${MACHINE}*.bin
+        objcopy -I srec -O binary u-boot-elf-cm33-${MACHINE}.shdr u-boot-elf-cm33-${MACHINE}-header.bin
+        objcopy -I srec -O binary u-boot-elf-cm33-${MACHINE}.srec u-boot-elf-cm33-${MACHINE}.bin
+
     fi
 }
 
