@@ -1,0 +1,36 @@
+From 55424d3b97503176ee596a1ae44748d3c617198c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Cl=C3=A9ment=20Le=20Goffic?= <legoffic.clement@gmail.com>
+Date: Tue, 1 Sep 2026 11:10:48 +0200
+Subject: [PATCH 4/6] arm64: renesas: defconfig: Enable the Ethernet Switch3
+ driver
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+rtsn.c now calls rswitch3_attach_tsnes() and rswitch3_detach_tsnes()
+unconditionally, and rswitch3.h declares them without providing stubs
+when the driver is disabled.
+The defconfig enables RTSN but not RENESAS_ETHER_SWITCH3, so vmlinux
+fails to link.
+Enable the switch driver to resolve the symbols.
+
+Signed-off-by: Clément Le Goffic <clegoffic@baylibre.com>
+---
+ arch/arm64/configs/renesas_defconfig | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm64/configs/renesas_defconfig b/arch/arm64/configs/renesas_defconfig
+index c4eb06da6986..fc8a71d08cc1 100644
+--- a/arch/arm64/configs/renesas_defconfig
++++ b/arch/arm64/configs/renesas_defconfig
+@@ -149,6 +149,7 @@ CONFIG_VIRTIO_NET=y
+ CONFIG_SH_ETH=y
+ CONFIG_RAVB=y
+ CONFIG_RENESAS_ETHER_SWITCH=y
++CONFIG_RENESAS_ETHER_SWITCH3=y
+ CONFIG_RTSN=y
+ CONFIG_STMMAC_ETH=y
+ # CONFIG_DWMAC_GENERIC is not set
+-- 
+2.43.0
+

@@ -1,0 +1,50 @@
+From 4c3f73685807fce19b81324ce50897c68bc5858d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Cl=C3=A9ment=20Le=20Goffic?= <legoffic.clement@gmail.com>
+Date: Mon, 24 Aug 2026 19:59:03 +0200
+Subject: [PATCH 3/6] soc: renesas: rcar-mfis: Clear stale doorbells on channel
+ startup
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The boot stages talk SCMI over the same MFIS channel as the kernel.
+The server answers each of their requests by setting the agent doorbell
+bit, and a boot stage that polls the shared memory instead of taking the
+interrupt never clears it.
+The bit is still set when the kernel requests the channel, so the
+interrupt fires the moment request_irq() enables it.
+That is before the SCMI mailbox transport has assigned its channel info,
+and the receive callback crashes on the NULL pointer from within
+mbox_request_channel().
+
+Clear the doorbell before enabling the interrupt so only requests made
+by the kernel itself can raise it.
+
+Co-developed-by: Claude Fable 5 <noreply@anthropic.com>
+Signed-off-by: Clément Le Goffic <clegoffic@baylibre.com>
+---
+ drivers/soc/renesas/rcar-mfis.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/soc/renesas/rcar-mfis.c b/drivers/soc/renesas/rcar-mfis.c
+index 3435c3e16198..9c309ec4f4ca 100644
+--- a/drivers/soc/renesas/rcar-mfis.c
++++ b/drivers/soc/renesas/rcar-mfis.c
+@@ -108,10 +108,14 @@ static irqreturn_t mfis_mb_iicr_interrupt(int irq, void *data)
+ static int mfis_mb_startup(struct mbox_chan *chan)
+ {
+ 	struct mfis_chan_priv *chan_priv = chan->con_priv;
++	struct mfis_priv *priv = mfis_mb_mbox_to_priv(chan->mbox);
+ 
+ 	if (!chan_priv->irq)
+ 		return 0;
+ 
++	/* A doorbell left set by a boot stage fires before the client is ready */
++	mfis_write(&priv->mbox_reg, chan_priv->reg, 0);
++
+ 	return request_irq(chan_priv->irq, mfis_mb_iicr_interrupt, 0,
+ 			   dev_name(chan->mbox->dev), chan);
+ }
+-- 
+2.43.0
+

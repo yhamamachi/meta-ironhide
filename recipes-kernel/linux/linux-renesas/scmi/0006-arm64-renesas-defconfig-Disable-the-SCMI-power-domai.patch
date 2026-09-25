@@ -1,0 +1,38 @@
+From 5ff400ee9a6c1ec36c3c4aa031a6eb1902b0ccf4 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Cl=C3=A9ment=20Le=20Goffic?= <legoffic.clement@gmail.com>
+Date: Tue, 1 Sep 2026 14:53:00 +0200
+Subject: [PATCH 6/6] arm64: renesas: defconfig: Disable the SCMI power domain
+ provider
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Once the scmi_devpd provider probes successfully, the Linux power
+domain housekeeping sends POWER_STATE_SET(OFF) to unclaimed domains
+and takes the CMN interconnect domain down, which kills the AP.
+The device tree power-domain ids do not match the SCP domain table
+yet, so no working domain control is lost by turning it off.
+Disable the provider until the id contract and the SCP side agent
+permissions are in place.
+
+Co-developed-by: Claude Fable 5 <noreply@anthropic.com>
+Signed-off-by: Clément Le Goffic <clegoffic@baylibre.com>
+---
+ arch/arm64/configs/renesas_defconfig | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm64/configs/renesas_defconfig b/arch/arm64/configs/renesas_defconfig
+index fc8a71d08cc1..be7f31119671 100644
+--- a/arch/arm64/configs/renesas_defconfig
++++ b/arch/arm64/configs/renesas_defconfig
+@@ -122,6 +122,7 @@ CONFIG_PCI_PWRCTRL_SLOT=y
+ CONFIG_DEVTMPFS=y
+ CONFIG_DEVTMPFS_MOUNT=y
+ CONFIG_ARM_SCMI_PROTOCOL=y
++# CONFIG_ARM_SCMI_POWER_DOMAIN is not set
+ CONFIG_ARM_SCMI_POWER_CONTROL=y
+ # CONFIG_DMIID is not set
+ CONFIG_MTD=y
+-- 
+2.43.0
+
