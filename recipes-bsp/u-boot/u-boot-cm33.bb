@@ -23,6 +23,11 @@ SRC_URI = "${UBOOT_URL};branch=${BRANCH};protocol=https"
 
 PV = "v2026.10-rc5+git${SRCPV}"
 
+SRC_URI:append = " \
+    file://for-development.cfg \
+    file://ironhide.env;subdir=git/board/renesas/ironhide/ \
+"
+
 UBOOT_SREC_SUFFIX = "srec"
 UBOOT_SREC ?= "u-boot-elf.${UBOOT_SREC_SUFFIX}"
 UBOOT_SREC_CM33 ?= "u-boot-elf-cm33.${UBOOT_SREC_SUFFIX}"
