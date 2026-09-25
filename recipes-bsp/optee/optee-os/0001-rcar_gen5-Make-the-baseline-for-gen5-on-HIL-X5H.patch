@@ -1,0 +1,2163 @@
+From 5c310063775b60502a2fc256de05d0466d6b8e2e Mon Sep 17 00:00:00 2001
+From: Nhi Nguyen <nhi.nguyen.kx@renesas.com>
+Date: Wed, 2 Jul 2025 11:04:10 +0700
+Subject: [PATCH] rcar_gen5: Make the baseline for gen5 on HIL-X5H
+
+ There are features supported in this version:
+ - Logging: SCIF/HSCIF implementation
+ - Update MMU table
+ - Add direct mapping function
+ - Temp disable device tree init
+ - Temp remove to avoid unhandled exception error
+ - Enable GIC v3
+ - Disable CFG_INSECURE to avoid warning
+ - Logging: add logging feature
+ - Add mask processing of interrupt distribution CPU
+ - Update platform customization for GIC driver
+ - Update interrupt for customization
+ - gic: Fix the issue of the service hanging during CPU_ON when waking up secondary cores
+ - Fix warning of -Wshift-count-overflow in masking CPUs
+ - Update cluster/cores following update of Hardware
+	Detail:
+		- 32 cores totally
+		- 8 clusters
+		- 4 core/cluster
+
+Signed-off-by: Nhi Nguyen <nhi.nguyen.kx@renesas.com>
+---
+ .gitignore                                    |   5 +
+ core/arch/arm/include/mm/core_mmu_arch.h      |   6 +-
+ core/arch/arm/include/mm/generic_ram_layout.h |   1 +
+ core/arch/arm/kernel/boot.c                   |  16 +-
+ core/arch/arm/kernel/sub.mk                   |   5 +
+ core/arch/arm/plat-rcar_gen5/conf.mk          |  59 ++++
+ core/arch/arm/plat-rcar_gen5/link.mk          |   5 +
+ core/arch/arm/plat-rcar_gen5/main.c           | 256 ++++++++++++++++++
+ .../arch/arm/plat-rcar_gen5/platform_config.h | 187 +++++++++++++
+ core/arch/arm/plat-rcar_gen5/rcar-common.h    |  67 +++++
+ core/arch/arm/plat-rcar_gen5/rcar_log_func.c  | 167 ++++++++++++
+ core/arch/arm/plat-rcar_gen5/rcar_log_func.h  |  73 +++++
+ core/arch/arm/plat-rcar_gen5/rcar_version.h   |  13 +
+ core/arch/arm/plat-rcar_gen5/romapi_call.S    |  98 +++++++
+ core/arch/arm/plat-rcar_gen5/sub.mk           |  14 +
+ core/arch/arm/plat-rcar_gen5/trace_ext.c      |  93 +++++++
+ core/drivers/gic.c                            |  11 +-
+ core/drivers/scif.c                           | 248 +++++++++++++++--
+ core/include/console.h                        |   2 +-
+ core/include/drivers/gic.h                    |  16 ++
+ core/include/drivers/hscif_register.h         |  50 ++++
+ core/include/drivers/scif.h                   |   7 +-
+ core/include/drivers/scif_register.h          |  46 ++++
+ core/include/drivers/serial.h                 |   2 +-
+ .../interrupt-controller/arm-gic.h            |   4 +-
+ core/include/kernel/interrupt.h               |   3 +
+ core/kernel/console.c                         |   2 +-
+ core/kernel/interrupt.c                       |  11 +
+ core/kernel/pm.c                              |  17 +-
+ core/kernel/sub.mk                            |   1 +
+ core/kernel/trace_ext.c                       |   8 +-
+ core/mm/core_mmu.c                            |  83 +++++-
+ core/tee/tee_cryp_utl.c                       |   3 +-
+ lib/libutee/tee_api.c                         |   1 +
+ mk/config.mk                                  |   2 +-
+ 35 files changed, 1522 insertions(+), 60 deletions(-)
+ create mode 100644 core/arch/arm/plat-rcar_gen5/conf.mk
+ create mode 100644 core/arch/arm/plat-rcar_gen5/link.mk
+ create mode 100644 core/arch/arm/plat-rcar_gen5/main.c
+ create mode 100644 core/arch/arm/plat-rcar_gen5/platform_config.h
+ create mode 100644 core/arch/arm/plat-rcar_gen5/rcar-common.h
+ create mode 100644 core/arch/arm/plat-rcar_gen5/rcar_log_func.c
+ create mode 100644 core/arch/arm/plat-rcar_gen5/rcar_log_func.h
+ create mode 100644 core/arch/arm/plat-rcar_gen5/rcar_version.h
+ create mode 100644 core/arch/arm/plat-rcar_gen5/romapi_call.S
+ create mode 100644 core/arch/arm/plat-rcar_gen5/sub.mk
+ create mode 100644 core/arch/arm/plat-rcar_gen5/trace_ext.c
+ create mode 100644 core/include/drivers/hscif_register.h
+ create mode 100644 core/include/drivers/scif_register.h
+
+diff --git a/.gitignore b/.gitignore
+index 79de5e9f7..d30499cd8 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -12,3 +12,8 @@
+ !.gitattributes
+ !.gitignore
+ !.github
++.cproject
++cscope.*
++.project
++*.swp
++.vscode
+diff --git a/core/arch/arm/include/mm/core_mmu_arch.h b/core/arch/arm/include/mm/core_mmu_arch.h
+index 803c9c42e..43ae3fdf5 100644
+--- a/core/arch/arm/include/mm/core_mmu_arch.h
++++ b/core/arch/arm/include/mm/core_mmu_arch.h
+@@ -32,12 +32,12 @@
+ #define TRUSTED_SRAM_SIZE	TZSRAM_SIZE
+ #endif
+ 
+-#ifdef TZDRAM_BASE
++#ifdef CFG_TZDRAM_START
+ #ifdef TRUSTED_DRAM_BASE
+ #error TRUSTED_DRAM_BASE is already defined
+ #endif
+-#define TRUSTED_DRAM_BASE	TZDRAM_BASE
+-#define TRUSTED_DRAM_SIZE	TZDRAM_SIZE
++#define TRUSTED_DRAM_BASE	CFG_TZDRAM_START
++#define TRUSTED_DRAM_SIZE	CFG_TZDRAM_SIZE
+ #endif
+ 
+ #define SMALL_PAGE_SHIFT	U(12)
+diff --git a/core/arch/arm/include/mm/generic_ram_layout.h b/core/arch/arm/include/mm/generic_ram_layout.h
+index 367dd3576..29e15eba2 100644
+--- a/core/arch/arm/include/mm/generic_ram_layout.h
++++ b/core/arch/arm/include/mm/generic_ram_layout.h
+@@ -7,6 +7,7 @@
+ #define __MM_GENERIC_RAM_LAYOUT_H
+ 
+ #include <util.h>
++#include <platform_config.h>
+ 
+ /*
+  * Generic RAM layout configuration directives
+diff --git a/core/arch/arm/kernel/boot.c b/core/arch/arm/kernel/boot.c
+index 94380f9df..ff9374135 100644
+--- a/core/arch/arm/kernel/boot.c
++++ b/core/arch/arm/kernel/boot.c
+@@ -860,7 +860,7 @@ static int mark_tzdram_as_reserved(struct dt_descriptor *dt)
+ 				   CFG_TZDRAM_SIZE);
+ }
+ 
+-static void update_external_dt(void)
++static void __maybe_unused update_external_dt(void)
+ {
+ 	struct dt_descriptor *dt = get_external_dt_desc();
+ 
+@@ -887,6 +887,17 @@ static void update_external_dt(void)
+ }
+ #endif /*!CFG_DT*/
+ 
++#ifdef CFG_NS_VIRTUALIZATION
++static TEE_Result virt_init_heap(void)
++{
++	/* We need to initialize pool for every virtual guest partition */
++	malloc_add_pool(__heap1_start, __heap1_end - __heap1_start);
++
++	return TEE_SUCCESS;
++}
++preinit_early(virt_init_heap);
++#endif
++
+ void init_tee_runtime(void)
+ {
+ #ifndef CFG_WITH_PAGER
+@@ -980,6 +991,7 @@ static bool cpu_nmfi_enabled(void)
+ void __weak boot_init_primary_late(unsigned long fdt __unused,
+ 				   unsigned long manifest __unused)
+ {
++#if 0
+ 	size_t fdt_size = CFG_DTB_MAX_SIZE;
+ 
+ 	if (IS_ENABLED(CFG_TRANSFER_LIST) && mapped_tl) {
+@@ -1000,7 +1012,7 @@ void __weak boot_init_primary_late(unsigned long fdt __unused,
+ 	discover_nsec_memory();
+ 	update_external_dt();
+ 	configure_console_from_dt();
+-
++#endif
+ 	IMSG("OP-TEE version: %s", core_v_str);
+ 	if (IS_ENABLED(CFG_INSECURE)) {
+ 		IMSG("WARNING: This OP-TEE configuration might be insecure!");
+diff --git a/core/arch/arm/kernel/sub.mk b/core/arch/arm/kernel/sub.mk
+index 40b7a3f92..a72089313 100644
+--- a/core/arch/arm/kernel/sub.mk
++++ b/core/arch/arm/kernel/sub.mk
+@@ -39,6 +39,11 @@ ifeq ($(CFG_WITH_VFP),y)
+ srcs-$(CFG_ARM32_core) += vfp_a32.S
+ srcs-$(CFG_ARM64_core) += vfp_a64.S
+ endif
++
++ifeq ($(PLATFORM_rcar_gen5),n)
++srcs-y += trace_ext.c
++endif
++
+ srcs-$(CFG_ARM32_core) += misc_a32.S
+ srcs-$(CFG_ARM64_core) += misc_a64.S
+ srcs-$(CFG_WITH_STMM_SP) += stmm_sp.c
+diff --git a/core/arch/arm/plat-rcar_gen5/conf.mk b/core/arch/arm/plat-rcar_gen5/conf.mk
+new file mode 100644
+index 000000000..02e635912
+--- /dev/null
++++ b/core/arch/arm/plat-rcar_gen5/conf.mk
+@@ -0,0 +1,59 @@
++PLATFORM_FLAVOR ?= X5H
++include core/arch/arm/cpu/cortex-armv8-0.mk
++
++$(call force,CFG_SECURE_TIME_SOURCE_CNTPCT,y)
++$(call force,CFG_WITH_ARM_TRUSTED_FW,y)
++$(call force,CFG_GIC,y)
++$(call force,CFG_CORE_LARGE_PHYS_ADDR,y)
++$(call force,CFG_CORE_ARM64_PA_BITS,36)
++# Disable core ASLR for two reasons:
++# 1. There is no source for ALSR seed, as Rcar platform
++# does not provide DTB to OP-TEE. Also, there is no
++# publically available documentation on integrated
++# hardware RNG, so we can't use it either.
++# 2. OP-TEE crashes during boot with enabled CFG_CORE_ASLR.
++$(call force,CFG_CORE_ASLR,n)
++$(call force,CFG_ARM64_core,y)
++$(call force,CFG_WITH_LPAE,y)
++ifeq ($(PLATFORM_FLAVOR), X5H)
++$(call force,CFG_RCAR_GEN5, y)
++endif
++
++CFG_ARM_GICV3 ?= y
++#CFG_TZDRAM_START ?= 0x44100000
++#CFG_TZDRAM_SIZE	 ?= 0x03D00000
++#CFG_TEE_RAM_VA_SIZE ?= 0x100000
++# CFG_CRYPTO_WITH_CE=y
++supported-ta-targets = ta_arm64
++CFG_DT ?= y
++CFG_WITH_SOFTWARE_PRNG ?= y
++CFG_TEE_CORE_DEBUG ?= n
++
++#ifeq ($(CFG_RCAR_GEN5_HWRNG), y)
++#$(warning "Warning: Use of HWRNG can cause crashes on some Renesas SoCs")
++#CFG_HWRNG_QUALITY ?= 1024
++#CFG_HWRNG_PTA ?= y
++#endif
++
++# For logging function
++# Compiler switch - Debug log(Linux terminal log)
++RCAR_DEBUG_LOG ?= 0
++ifneq ($(RCAR_DEBUG_LOG),0)
++core-platform-cflags += -DRCAR_DEBUG_LOG
++#srcs-y += trace_ext.c
++endif
++
++ifeq ($(CFG_RCAR_GEN5), y)
++# 1xx - for SCIFxx
++# 2xx - for HSCIFxx
++CFG_RCAR_UART ?= 200
++$(call force,CFG_RCAR_ROMAPI, n)
++$(call force,CFG_CORE_CLUSTER_SHIFT,2) #log2(2) = 4 --> 4(cores/per cluster)
++$(call force,CFG_TEE_CORE_NB_CORE,32)
++CFG_NUM_THREADS ?= $(CFG_TEE_CORE_NB_CORE)
++CFG_MMAP_REGIONS ?= 22
++endif
++
++# For Direct mapping function
++core-platform-cflags += -DRCAR_MMU_DIRECT_MAPPING
++
+diff --git a/core/arch/arm/plat-rcar_gen5/link.mk b/core/arch/arm/plat-rcar_gen5/link.mk
+new file mode 100644
+index 000000000..51fc371a8
+--- /dev/null
++++ b/core/arch/arm/plat-rcar_gen5/link.mk
+@@ -0,0 +1,5 @@
++include core/arch/arm/kernel/link.mk
++
++SRECFLAGS ?= --srec-forceS3 --adjust-vma=$(CFG_TZDRAM_START)
++
++all: $(link-out-dir)/tee.srec
+diff --git a/core/arch/arm/plat-rcar_gen5/main.c b/core/arch/arm/plat-rcar_gen5/main.c
+new file mode 100644
+index 000000000..eb48e54bc
+--- /dev/null
++++ b/core/arch/arm/plat-rcar_gen5/main.c
+@@ -0,0 +1,256 @@
++// SPDX-License-Identifier: BSD-2-Clause
++/*
++ * Copyright (c) 2016, GlobalLogic
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice,
++ * this list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form must reproduce the above copyright notice,
++ * this list of conditions and the following disclaimer in the documentation
++ * and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include <console.h>
++#include <crypto/crypto.h>
++#include <kernel/boot.h>
++#include <kernel/panic.h>
++#include <kernel/tee_time.h>
++#include <mm/core_memprot.h>
++#include <platform_config.h>
++#include <stdint.h>
++#include <drivers/scif.h>
++#include <drivers/gic.h>
++#include <string.h>
++#include <sm/optee_smc.h>
++#include <tee/entry_fast.h>
++#include "rcar_log_func.h"
++#include "rcar-common.h"
++#include <tee/tee_cryp_utl.h>
++#include <kernel/boot.h>
++#include <trace.h>
++#include <kernel/misc.h>
++#include <kernel/spinlock.h>
++
++static void main_hook_gic_add(struct itr_chip *chip, size_t it, uint32_t flags, uint32_t prio);
++static void main_secondary_init_gic(void);
++
++uint32_t cpu_on_core_lock __nex_bss = (uint32_t)SPINLOCK_UNLOCK;
++uint8_t cpu_on_core_bit __nex_bss = 0U;
++static void (*gic_add_ptr_bk)(struct itr_chip *chip, size_t it,
++		uint32_t flags, uint32_t prio) __nex_bss;
++static struct itr_ops main_itr_ops __nex_bss;
++
++void main_secondary_init_gic(void)
++{
++	uint32_t exceptions;
++	uint8_t cpu_mask;
++
++	DMSG("IN cpu_on_core_bit=0x%x, get_core_pos()=%lu",
++			cpu_on_core_bit, get_core_pos());
++	exceptions = cpu_spin_lock_xsave(&cpu_on_core_lock);
++
++	cpu_on_core_bit |= (uint8_t)(0x1U << get_core_pos());
++	cpu_mask = cpu_on_core_bit;
++
++	itr_set_all_cpu_mask(cpu_mask);
++
++	cpu_spin_unlock_xrestore(&cpu_on_core_lock, exceptions);
++	DMSG("OUT cpu_mask=0x%x", cpu_mask);
++}
++
++unsigned long thread_cpu_off_handler(unsigned long a0 __unused,
++			unsigned long a1 __unused)
++{
++	uint32_t exceptions;
++	uint8_t cpu_mask;
++
++	DMSG("IN cpu_on_core_bit=0x%x, get_core_pos()=%lu",
++			cpu_on_core_bit, get_core_pos());
++	exceptions = cpu_spin_lock_xsave(&cpu_on_core_lock);
++
++	cpu_on_core_bit &= (0xFFU ^ (uint8_t)(0x1U << get_core_pos()));
++	cpu_mask = cpu_on_core_bit;
++
++	itr_set_all_cpu_mask(cpu_mask);
++
++	cpu_spin_unlock_xrestore(&cpu_on_core_lock, exceptions);
++	DMSG("OUT cpu_mask=0x%x", cpu_mask);
++	return 0;
++}
++
++static void main_hook_gic_add(struct itr_chip *chip, size_t it, uint32_t flags, uint32_t prio)
++{
++	uint32_t exceptions;
++	uint8_t cpu_mask;
++
++	DMSG("IN cpu_on_core_bit=0x%x, it=0x%lu", cpu_on_core_bit, it);
++	gic_add_ptr_bk(chip, it, flags, prio);
++
++	exceptions = cpu_spin_lock_xsave(&cpu_on_core_lock);
++	cpu_mask = cpu_on_core_bit;
++	interrupt_set_affinity(chip, it, cpu_mask);
++
++	cpu_spin_unlock_xrestore(&cpu_on_core_lock, exceptions);
++	DMSG("OUT cpu_mask=0x%x", cpu_mask);
++}
++
++// register_phys_mem_pgdir(MEM_AREA_IO_SEC, CONSOLE_UART_START, SCIF_REG_SIZE);
++//register_phys_mem_pgdir(MEM_AREA_IO_SEC, GICD_BASE, GIC_DIST_REG_SIZE);
++register_phys_mem_pgdir(MEM_AREA_IO_SEC, GICC_BASE, GIC_CPU_REG_SIZE);
++
++#ifdef MEMORY1_BASE
++register_phys_mem_pgdir(MEMORY1_TYPE, MEMORY1_BASE, MEMORY1_SIZE);
++#endif
++#ifdef MEMORY2_BASE
++register_phys_mem(MEMORY2_TYPE, MEMORY2_BASE, MEMORY2_SIZE);
++#endif
++#ifdef MEMORY3_BASE
++register_phys_mem_pgdir(MEMORY3_TYPE, MEMORY3_BASE, MEMORY3_SIZE);
++#endif
++#ifdef MEMORY4_BASE
++register_phys_mem(MEMORY4_TYPE, MEMORY4_BASE, MEMORY4_SIZE);
++#endif
++#ifdef MEMORY5_BASE
++register_phys_mem_pgdir(MEMORY5_TYPE, MEMORY5_BASE, MEMORY5_SIZE);
++#endif
++#ifdef MEMORY6_BASE
++register_phys_mem_pgdir(MEMORY6_TYPE, MEMORY6_BASE, MEMORY6_SIZE);
++#endif
++#ifdef MEMORY7_BASE
++register_phys_mem_pgdir(MEMORY7_TYPE, MEMORY7_BASE, MEMORY7_SIZE);
++#endif
++#ifdef MEMORY8_BASE
++register_phys_mem_pgdir(MEMORY8_TYPE, MEMORY8_BASE, MEMORY8_SIZE);
++#endif
++#ifdef MEMORY9_BASE
++register_phys_mem_pgdir(MEMORY9_TYPE, MEMORY9_BASE, MEMORY9_SIZE);
++#endif
++#ifdef MEMORY10_BASE
++register_phys_mem_pgdir(MEMORY10_TYPE, MEMORY10_BASE, MEMORY10_SIZE);
++#endif
++#ifdef MEMORY11_BASE
++register_phys_mem_pgdir(MEMORY11_TYPE, MEMORY11_BASE, MEMORY11_SIZE);
++#endif
++#ifdef DEVICE0_PA_BASE
++register_phys_mem_pgdir(DEVICE0_TYPE, DEVICE0_PA_BASE, DEVICE0_SIZE);
++#endif
++#ifdef DEVICE1_PA_BASE
++register_phys_mem_pgdir(DEVICE1_TYPE, DEVICE1_PA_BASE, DEVICE1_SIZE);
++#endif
++#ifdef DEVICE2_PA_BASE
++register_phys_mem_pgdir(DEVICE2_TYPE, DEVICE2_PA_BASE, DEVICE2_SIZE);
++#endif
++
++#ifdef CFG_SCIF
++static struct scif_uart_data console_data __nex_bss;
++#endif
++
++#ifdef PRR_BASE
++uint32_t rcar_prr_value __nex_bss;
++#endif
++
++void plat_console_init(void)
++{
++#ifdef CFG_SCIF
++	hscif_uart_init(&console_data, CONSOLE_UART_START);
++	register_serial_console(&console_data.chip);
++	display_log();
++#else
++	/* No operation */
++#endif
++}
++
++#ifdef CFG_RCAR_ROMAPI
++/* Should only seed from a hardware random number generator */
++//static_assert(!IS_ENABLED(CFG_WITH_SOFTWARE_PRNG));
++
++unsigned long plat_get_aslr_seed(void)
++{
++	unsigned long seed = 0;
++
++	/* On RCAR we can get hw random bytes on early boot stages */
++	if (crypto_rng_read(&seed, sizeof(seed)))
++		panic();
++
++	return seed;
++}
++#endif
++
++void boot_primary_init_intc(void)
++{
++	gic_init_v3(0, GICD_BASE, GICR_BASE);
++
++	cpu_on_core_bit = (uint8_t)(0x1U << get_core_pos());
++
++	gic_add_ptr_bk = gic_data.chip.ops->add;
++	main_itr_ops = *gic_data.chip.ops;
++	main_itr_ops.add = main_hook_gic_add;
++	gic_data.chip.ops = (const struct itr_ops *)&main_itr_ops;
++
++#ifndef CFG_SCIF
++	/* Initialize logging feature */
++	log_buf_init();
++#endif
++}
++
++void boot_secondary_init_intc(void)
++{
++	gic_init_per_cpu();
++	main_secondary_init_gic();
++}
++
++#ifdef CFG_WITH_SOFTWARE_PRNG /* using the SW RNG supported*/
++void plat_rng_init(void)
++{
++	TEE_Result res = TEE_SUCCESS;
++	TEE_Time t = { };;
++	//uint16_t buf[] = { };
++
++	//res = crypto_rng_read(buf, sizeof(buf));
++	 /*res = tee_time_get_sys_time(&t);
++	 if(!res)
++	{
++		EMSG("Failed to get time RNG: %#" PRIx32, res);
++		// panic();
++	}
++	memset(&t, 0, sizeof(t));
++	*/
++
++	res = crypto_rng_init(&t, sizeof(t));
++	if (res) {
++		EMSG("Failed to initialize RNG: %#" PRIx32, res);
++		panic();
++	}
++}
++#endif /*END CFG_WITH_SOFTWARE_PRNG */
++/* For logging output function */
++/* Overriding the default __weak tee_entry_fast() */
++void tee_entry_fast(struct thread_smc_args *args)
++{
++	DMSG("IN args->a0=0x%lX", args->a0);
++	if ((args->a0 == OPTEE_SMC_GET_SHM_CONFIG) &&
++		(args->a1 == SMC_RCAR_CMD) &&
++		(args->a2 == START_DLOG_OUTPUT)) {
++			is_normal_world_initialized = 1;
++			DMSG("Normal World was initialized");
++	}
++	 __tee_entry_fast(args);
++	 DMSG("OUT Received SMC from Normal World");
++}
++
+diff --git a/core/arch/arm/plat-rcar_gen5/platform_config.h b/core/arch/arm/plat-rcar_gen5/platform_config.h
+new file mode 100644
+index 000000000..a47e6e3ed
+--- /dev/null
++++ b/core/arch/arm/plat-rcar_gen5/platform_config.h
+@@ -0,0 +1,187 @@
++/* SPDX-License-Identifier: BSD-2-Clause */
++/*
++ * Copyright (c) 2016, GlobalLogic
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice,
++ * this list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form must reproduce the above copyright notice,
++ * this list of conditions and the following disclaimer in the documentation
++ * and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef PLATFORM_CONFIG_H
++#define PLATFORM_CONFIG_H
++
++#include <mm/generic_ram_layout.h>
++
++#define RCAR_CACHE_LINE_SZ		64
++#define CFG_RCAR_GEN5   1
++
++/* Make stacks aligned to data cache line length */
++#define STACK_ALIGNMENT		RCAR_CACHE_LINE_SZ
++
++#if defined(CFG_RCAR_GEN5)
++#define GICC_BASE              0xF1200000
++#define GICD_BASE              0x38000000
++#define GICR_BASE              0x38060000
++#if CFG_RCAR_UART == 101	/* SCIF1 */
++#define CONSOLE_UART_START	0xC0704000
++#elif CFG_RCAR_UART == 200	/* HSCIF0 */
++#define CONSOLE_UART_START	0xC0710000
++#endif
++/* config for MMU mapping */
++#define RCAR_SRAM_BASE		    0x4D000000U
++#define CFG_TZDRAM_START             RCAR_SRAM_BASE
++#define CFG_TZDRAM_SIZE             (0x02000000U) /* 1024*1024*32 */
++
++#define CFG_TEE_RAM_VA_SIZE         (1024 * 1024 * 3) /* = 300000*/
++//#define TEE_RAM_START           (RCAR_SRAM_BASE + 0x100000)      /*TEE RAM address (0x44100000)*/
++#define TEE_RAM_START           (0x4D100000)      /*TEE RAM address (0x4D100000)*/
++#define TEE_RAM_SIZE            (0x00300000U)     /* TEE RAM size*/
++
++#ifdef CFG_TEE_RAM_VA_SIZE
++#ifdef CFG_WITH_PAGER
++#define TEE_RAM_PH_SIZE		TZSRAM_SIZE
++#else
++// #define TEE_RAM_START		TZDRAM_BASE
++#define TEE_RAM_PH_SIZE		TEE_RAM_SIZE
++#endif
++#endif
++
++#ifndef TEE_LOAD_ADDR
++#define TEE_LOAD_ADDR   TEE_RAM_START
++#endif
++
++#define TA_RAM_START            (RCAR_SRAM_BASE + 0x400000U)   /* TA RAM address       */
++#define TA_RAM_SIZE             (0x01400000U)   /* TA RAM size          */
++
++#define TEE_SHMEM_START         (RCAR_SRAM_BASE + 0x3E00000U)   /* Share Memory address */
++#define TEE_SHMEM_SIZE          (0x00100000U)   /* Share Memory size    */
++
++#define OPTEE_LOG_BASE          (RCAR_SRAM_BASE + 0x1E00000U)   /* OP-TEE Log Area address */
++#define OPTEE_LOG_NS_BASE       (RCAR_SRAM_BASE + 0x3F00000U)   /* OP-TEE Log Area NS addr */
++#define OPTEE_LOG_NS_SIZE       (0x00014000U)   /* OP-TEE Log Area NS size */
++
++#define TA_VERIFICATION_BASE    (RCAR_SRAM_BASE + 0x1800000U)   /* TA area for verification */
++#define TA_VERIFICATION_SIZE    (0x00100000U)   /* TA for verification size */
++#define CRYPTOENGINE_WORK_BASE  (0x19000000U)   /* Crypto Enegine Work area */
++
++#define NONCACHE_WORK_BASE   (RCAR_SRAM_BASE + 0x1F00000U)   /* Non Cache Area address   */
++#define NONCACHE_WORK_SIZE    (0x00100000U)   /* Non Cache Area Size  */
++//#define NONCACHE_WORK_BASE	(0x46200000U)
++
++#define ICU_FW_SHMEM_BASE       (0x41C00000U)   /* ICU FW Share Memory address */
++#define ICU_FW_SHMEM_SIZE       (0x00100000U)   /* ICU FW Share Memory size */
++// for SCIF/HSCIF mapping function
++#define MAP_DEVICE_REG_RCAR_BASE 	(0xC0400000)	/* Soc register Memory address */
++#define MAP_DEVICE_REG_RCAR_SIZE	(0x1FC00000)	/* Soc register Memory size */
++
++//#define RSHIP_M_BASE		(0x18980000U)		/*RSHIP-M Image area - mapped with MFIS*/
++#define LIFEC_BASE              (0x1C020000)    /* Life Cycle address   */
++//#define RST_BASE              (0xE6160000)    /* Reset address   */
++//#define CE_BASE               (0xE6600000U)   /* Crypto Engine address */
++//#define RPC_BASE              (0xC08C0000)   /* RPC address from 0xC08C0000 - 0xC08D0000 was included in Soc register momory mapping */
++#define PRR_BASE                (0xFFF00000U)   /* Product Register address */
++#define MFIS_BASE               (0x18800000U)   /* MFIS address */
++#define RPC_ADDR_MAP_BASE       (0x34000000U)   /* RPC Internal address <RPC: SPI Multi I/O Bus controller> */
++#define RPC_ADDR_MAP_SIZE       (0x04000000U)   /* RPC Address Map size */	
++
++#define MEM_SECTION_SIZE        (0x00100000U)
++#ifdef CFG_WITH_LPAE
++#define MAX_XLAT_TABLES         CFG_MMAP_REGIONS
++#endif
++
++
++ #define DEVICE0_PA_BASE	ROUNDDOWN(LIFEC_BASE, CORE_MMU_PGDIR_SIZE)
++ #define DEVICE0_SIZE		(MEM_SECTION_SIZE)
++ #define DEVICE0_TYPE		MEM_AREA_IO_SEC
++
++// #define DEVICE1_PA_BASE	ROUNDDOWN(CE_BASE, CORE_MMU_PGDIR_SIZE)
++// #define DEVICE1_SIZE		(MEM_SECTION_SIZE * 2)
++// #define DEVICE1_TYPE		MEM_AREA_IO_SEC
++
++#define DEVICE1_PA_BASE		ROUNDDOWN(GICD_BASE, CORE_MMU_PGDIR_SIZE)
++#define DEVICE1_SIZE		(MEM_SECTION_SIZE * 9)
++#define DEVICE1_TYPE		MEM_AREA_IO_SEC
++
++/* LOG Area for Secure World */
++#define MEMORY1_BASE		ROUNDDOWN(OPTEE_LOG_BASE, MEM_SECTION_SIZE)
++#define MEMORY1_SIZE		(MEM_SECTION_SIZE)
++#define MEMORY1_TYPE		MEM_AREA_IO_SEC
++#define MEMORY1_PA_END         (OPTEE_LOG_BASE + MEMORY1_SIZE)
++
++/* LOG Area for Normal World */
++#define MEMORY2_BASE           ROUNDDOWN(OPTEE_LOG_NS_BASE,MEM_SECTION_SIZE)
++#define MEMORY2_SIZE		(OPTEE_LOG_NS_SIZE)
++#define MEMORY2_TYPE		MEM_AREA_RAM_NSEC
++
++/* Crypto Engine Work area */
++#define MEMORY3_BASE		ROUNDDOWN(CRYPTOENGINE_WORK_BASE, \
++					MEM_SECTION_SIZE)
++#define MEMORY3_SIZE		(MEM_SECTION_SIZE * 4)
++#define MEMORY3_TYPE		MEM_AREA_RAM_SEC
++
++/* TA area for verification */
++#define MEMORY4_BASE		ROUNDDOWN(TA_VERIFICATION_BASE, \
++					MEM_SECTION_SIZE)
++#define MEMORY4_SIZE		(TA_VERIFICATION_SIZE)
++#define MEMORY4_TYPE		MEM_AREA_IO_SEC
++
++/* Product Register (PRR) */
++#define MEMORY5_BASE		ROUNDDOWN(PRR_BASE, MEM_SECTION_SIZE)
++#define MEMORY5_SIZE		(MEM_SECTION_SIZE)
++#define MEMORY5_TYPE		MEM_AREA_IO_SEC
++
++/* Non Cache Stack Area */
++#define MEMORY6_BASE           ROUNDDOWN(NONCACHE_WORK_BASE, \
++					MEM_SECTION_SIZE)
++#define MEMORY6_SIZE		(MEM_SECTION_SIZE)
++#define MEMORY6_TYPE		MEM_AREA_IO_SEC
++
++/* SPI Multi I/O Bus Controller (RPC) */
++/*#define MEMORY7_BASE		ROUNDDOWN(RPC_BASE, MEM_SECTION_SIZE)
++#define MEMORY7_SIZE		(MEM_SECTION_SIZE)
++#define MEMORY7_TYPE		MEM_AREA_IO_SEC
++*/
++/* RPC Address Map */
++#define MEMORY8_BASE		ROUNDDOWN(RPC_ADDR_MAP_BASE, MEM_SECTION_SIZE)
++#define MEMORY8_SIZE		(RPC_ADDR_MAP_SIZE)
++#define MEMORY8_TYPE		MEM_AREA_IO_SEC
++
++/* ICU FW Share Memory Address Map */
++#define MEMORY9_BASE		ROUNDDOWN(ICU_FW_SHMEM_BASE, MEM_SECTION_SIZE)
++#define MEMORY9_SIZE		(ICU_FW_SHMEM_SIZE)
++#define MEMORY9_TYPE		MEM_AREA_IO_SEC
++
++/* MFIS Address Map */
++#define MEMORY10_BASE		ROUNDDOWN(MFIS_BASE, MEM_SECTION_SIZE)
++#define MEMORY10_SIZE		(MEM_SECTION_SIZE)
++#define MEMORY10_TYPE		MEM_AREA_IO_SEC
++/* HSCIF address map area */
++#define MEMORY11_BASE		ROUNDDOWN(MAP_DEVICE_REG_RCAR_BASE, MAP_DEVICE_REG_RCAR_SIZE)
++#define MEMORY11_SIZE		(MAP_DEVICE_REG_RCAR_SIZE)
++#define MEMORY11_TYPE		MEM_AREA_IO_SEC
++#endif	/* CFG_RCAR_GENx */
++
++/* Full GlobalPlatform test suite requires TEE_SHMEM_SIZE to be at least 2MB */
++// #define TEE_SHMEM_START		(TZDRAM_BASE + TZDRAM_SIZE)
++// #define TEE_SHMEM_SIZE		0x100000
++
++#endif /*PLATFORM_CONFIG_H*/
+diff --git a/core/arch/arm/plat-rcar_gen5/rcar-common.h b/core/arch/arm/plat-rcar_gen5/rcar-common.h
+new file mode 100644
+index 000000000..1d9b29ffc
+--- /dev/null
++++ b/core/arch/arm/plat-rcar_gen5/rcar-common.h
+@@ -0,0 +1,67 @@
++/* SPDX-License-Identifier: BSD-2-Clause */
++/*
++ * Copyright (c) 2015-2023, Renesas Electronics Corporation
++ * */
++
++#ifndef RCAR_COMMON_H
++#define RCAR_COMMON_H
++
++#include <string.h>
++#include <platform_config.h>
++#include <kernel/misc.h>
++#include <kernel/panic.h>
++#include <drivers/gic.h>
++#include <arm.h>
++#include <kernel/tee_time.h>
++#include <mm/core_memprot.h>
++
++/*
++ * Convert a physical address to a virtual address with the
++ * MEM_AREA_IO_SEC attribute.
++ * */
++#define p2v_ioadr(r, len) ((vaddr_t)(phys_to_virt((r), MEM_AREA_IO_SEC, (len))))
++#define p2v_regadr(r, len) ((phys_to_virt((r), MEM_AREA_IO_SEC, (len))))
++
++/* RPC No specific to R-Car */
++#define TEE_RPC_DEBUG_LOG      (0x3F000000U)
++
++/* Product Register */
++#define PRR     p2v_ioadr(0xFFF00044U, MEMORY5_SIZE)
++
++/* Stack switching */
++uint32_t asm_switch_stack_pointer(uintptr_t jump, uint32_t stack, void *arg);
++
++/* Parameters value passed from ARM Trusted FW */
++#define TFW_ARG_CPU_SUSPEND    (0x0UL)
++#define TFW_ARG_SYSTEM_SUSPEND (0x1UL)
++
++/* Argument flag of the hw_engine_lock() */
++#define HWENG_SECURE_CORE      (0x00000001U)
++
++/* Debug log output for test confirmation */
++#ifndef RCAR_TEST_LOG
++#define TMSG(...)   ((void)0)
++#else
++#define TMSG(...)   trace_printf_helper(TRACE_DEBUG, true, __VA_ARGS__)
++#endif /* RCAR_TEST_LOG */
++
++/*
++ * Define the information of debug log that communicates between Normal
++ * World and Secure World.
++ * */
++#define SMC_RCAR_CMD           (12345U)
++
++#define START_DLOG_OUTPUT      (1U)
++
++/* Define a constant for the initialization flag */
++#define INIT_FLAG_UNINITIALIZED        (0U)
++#define INIT_FLAG_INITIALIZED  (1U)
++
++/* Declaration of global variables */
++extern uint32_t product_type;
++extern const int8_t *product_name;
++extern uint32_t prr_cut;
++extern uint32_t cpu_on_core_lock;
++extern uint8_t cpu_on_core_bit;
++
++#endif /* RCAR_COMMON_H */
+diff --git a/core/arch/arm/plat-rcar_gen5/rcar_log_func.c b/core/arch/arm/plat-rcar_gen5/rcar_log_func.c
+new file mode 100644
+index 000000000..ce45478f1
+--- /dev/null
++++ b/core/arch/arm/plat-rcar_gen5/rcar_log_func.c
+@@ -0,0 +1,167 @@
++// SPDX-License-Identifier: BSD-2-Clause
++/*
++ * Copyright (c) 2015-2020, Renesas Electronics Corporation
++ */
++
++#include <string.h>
++#include <kernel/linker.h>
++#include <kernel/spinlock.h>
++#include <optee_msg.h>
++#include <tee/cache.h>
++#include "rcar_log_func.h"
++#include "rcar-common.h"
++#include "rcar_version.h"
++
++struct log_buf_header_t *log_secram_header __nex_data;
++static int8_t *log_nonsec_ptr __nex_bss;
++uint32_t log_spin_lock __nex_bss;
++uint32_t cpu_id_run_log __nex_bss;
++int32_t is_normal_world_initialized __nex_bss;
++const int8_t version_of_renesas[] __attribute__((__section__(".version"))) =
++	VERSION_OF_RENESAS;
++
++void log_buf_init(void)
++{
++	const int8_t secram_prefix[] = LOG_SEC_PREFIX;
++	int32_t i;
++
++	/* initialize global variable */
++	log_secram_header = (struct log_buf_header_t *)phys_to_virt(
++				OPTEE_LOG_BASE, MEM_AREA_IO_SEC, MEMORY1_SIZE);
++	// log_nonsec_ptr = (int8_t *)phys_to_virt(OPTEE_LOG_NS_BASE,
++	// 			MEM_AREA_RAM_NSEC,OPTEE_LOG_NS_SIZE);
++	 log_nonsec_ptr = (int8_t *)core_mmu_get_va(OPTEE_LOG_NS_BASE,
++			MEM_AREA_RAM_NSEC,OPTEE_LOG_NS_SIZE);
++	log_spin_lock = (uint32_t)SPINLOCK_UNLOCK;
++	cpu_id_run_log = 0;
++	is_normal_world_initialized = 0;
++
++	/* initialize SDRAM area */
++	for (i = 0; i < LOG_SEC_PREFIX_LEN; i++) {
++		if (secram_prefix[i] != log_secram_header->prefix[i]) {
++			break;
++		}
++	}
++	if ((i < LOG_SEC_PREFIX_LEN) ||
++	    (log_secram_header->index >= LOG_AREA_MAX_SIZE)) {
++		(void)memset((int8_t *)log_secram_header,
++			0, sizeof(struct log_buf_header_t));
++		(void)memcpy(log_secram_header->prefix,
++			secram_prefix, sizeof(log_secram_header->prefix));
++	}
++
++	IMSG("Logging RAM initialized. (%s)", core_v_str);
++}
++
++void log_buf_write(const struct msg_block_t *msg_block, int32_t msg_block_num)
++{
++	int8_t *log_area = NULL;
++	uint32_t end_index;
++	size_t ram_wsize;
++	size_t total_wsize = 0U;
++	size_t index_wsize;
++	size_t head_wsize;
++	int32_t i;
++
++	for (i = 0; i < msg_block_num; i++) {
++		if ((log_secram_header == NULL) ||
++		    (total_wsize >= LOG_AREA_MAX_SIZE)) {
++			break;
++		}
++		if (log_area == NULL) {
++			log_area = (int8_t *)(&log_secram_header[1]);
++		}
++		ram_wsize = msg_block[i].size;
++		if ((total_wsize + ram_wsize) > LOG_AREA_MAX_SIZE) {
++			ram_wsize = LOG_AREA_MAX_SIZE - total_wsize;
++		}
++
++		end_index = log_secram_header->index + ram_wsize;
++		head_wsize = 0U;
++
++		if (end_index > LOG_AREA_MAX_SIZE) {
++			head_wsize = end_index - LOG_AREA_MAX_SIZE;
++		}
++		index_wsize = ram_wsize - head_wsize;
++
++		(void)memcpy(&log_area[log_secram_header->index],
++			&msg_block[i].addr[0], index_wsize);
++		total_wsize += index_wsize;
++
++		if (0U < head_wsize) {
++			(void)memcpy(&log_area[0],
++				&msg_block[i].addr[index_wsize], head_wsize);
++			total_wsize += head_wsize;
++			log_secram_header->index = head_wsize;
++		} else {
++			log_secram_header->index += index_wsize;
++			if (log_secram_header->index == LOG_AREA_MAX_SIZE) {
++				log_secram_header->index = 0U;
++			}
++		}
++
++		if (log_secram_header->size < LOG_AREA_MAX_SIZE) {
++			log_secram_header->size += index_wsize;
++		}
++	}
++}
++
++#ifdef RCAR_DEBUG_LOG
++void log_debug_send(const struct msg_block_t *msg_block, int32_t msg_block_num)
++{
++	static size_t send_log_size[CFG_TEE_CORE_NB_CORE] = {0U};
++	struct thread_param params;
++	uint32_t cpu_id;
++	int8_t *log_area;
++	size_t log_offs = 0U;
++	size_t memcpy_size;
++	int32_t i;
++	uint32_t exceptions;
++
++	exceptions = thread_mask_exceptions(THREAD_EXCP_ALL);
++	//cpu_id = get_core_pos();
++	cpu_id = cpu_id_run_log;
++	thread_unmask_exceptions(exceptions);
++
++	if ((log_nonsec_ptr != NULL) && (cpu_id < CFG_TEE_CORE_NB_CORE)) {
++		log_area = &log_nonsec_ptr[cpu_id * LOG_NS_CPU_AREA_SIZE];
++		if ((send_log_size[cpu_id] + LOG_SEND_MAX_SIZE) <
++		     LOG_NS_CPU_AREA_SIZE) {
++			if (send_log_size[cpu_id] > 0U) {
++				log_area[send_log_size[cpu_id]] = (int8_t)'\r';
++				log_area += send_log_size[cpu_id] + 1U;
++			}
++			for (i = 0; i < msg_block_num; i++) {
++				memcpy_size = msg_block[i].size;
++				if ((log_offs + memcpy_size) >
++				     LOG_SEND_MAX_SIZE) {
++					memcpy_size = LOG_SEND_MAX_SIZE -
++							log_offs;
++				}
++				(void)memcpy(&log_area[log_offs],
++					msg_block[i].addr, memcpy_size);
++				log_offs += memcpy_size;
++			}
++			log_area[log_offs] = (int8_t)'\0';
++			(void)cache_operation(TEE_CACHEFLUSH, log_area,
++					LOG_NS_CPU_AREA_SIZE);
++
++			if (send_log_size[cpu_id] == 0U) {
++				(void)memset(&params, 0, sizeof(params));
++				params.attr = OPTEE_MSG_ATTR_TYPE_VALUE_INPUT;
++				params.u.value.a = cpu_id;
++				params.u.value.b = 0U;
++
++				send_log_size[cpu_id] = log_offs;
++
++				(void)thread_rpc_cmd(TEE_RPC_DEBUG_LOG, 1,
++						&params);
++
++				send_log_size[cpu_id] = 0U;
++			} else {
++				send_log_size[cpu_id] = log_offs + 1U;
++			}
++		}
++	}
++}
++#endif
+diff --git a/core/arch/arm/plat-rcar_gen5/rcar_log_func.h b/core/arch/arm/plat-rcar_gen5/rcar_log_func.h
+new file mode 100644
+index 000000000..1deed1d75
+--- /dev/null
++++ b/core/arch/arm/plat-rcar_gen5/rcar_log_func.h
+@@ -0,0 +1,73 @@
++/* SPDX-License-Identifier: BSD-2-Clause */
++/*
++ * Copyright (c) 2015-2020, Renesas Electronics Corporation
++ */
++
++#ifndef RCAR_LOG_FUNC_H
++#define RCAR_LOG_FUNC_H
++
++/*
++ * Constant definition
++ */
++
++#define LOG_RAM_MAX_SIZE	(81920U)
++#define LOG_RAM_HEADER_SIZE	(16U)
++#define LOG_RAM_RESERVE_SIZE	(64U)
++#define LOG_AREA_MAX_SIZE	(LOG_RAM_MAX_SIZE - \
++				(LOG_RAM_HEADER_SIZE + LOG_RAM_RESERVE_SIZE))
++#define LOG_TIME_BUF_MAX_SIZE	(31)
++#define LOG_NS_CPU_AREA_SIZE	(1024U)
++#define LOG_SEC_PREFIX		"SLOG"
++#define LOG_SEC_PREFIX_LEN	(4)
++#define LOG_SEND_MAX_SIZE	(256U)
++
++#define SECRAM_MSG_BLK_NUM	(2)
++#define SECRAM_IDX_TIME		(0)
++#define SECRAM_IDX_MESG		(1)
++
++#define TRMLOG_MSG_BLK_NUM	(3)
++#define TRMLOG_IDX_PRFX		(0)
++#define TRMLOG_IDX_TIME		(1)
++#define TRMLOG_IDX_MESG		(2)
++
++#ifdef RCAR_DEBUG_LOG
++#define MSG_BLK_MAX_NUM		TRMLOG_MSG_BLK_NUM
++#else
++#define MSG_BLK_MAX_NUM		SECRAM_MSG_BLK_NUM
++#endif  /* RCAR_DEBUG_LOG */
++
++/*
++ * Struct definition
++ */
++
++struct log_buf_header_t {
++	int8_t prefix[LOG_SEC_PREFIX_LEN];
++	uint32_t index;
++	uint32_t size;
++	uint32_t reserve;
++};
++
++struct msg_block_t {
++	const int8_t *addr;
++	size_t size;
++};
++
++/*
++ * Global variable declaration
++ */
++
++extern struct log_buf_header_t *log_secram_header;
++extern uint32_t log_spin_lock;
++extern uint32_t cpu_id_run_log;
++extern int32_t is_normal_world_initialized;
++
++/*
++ * Prototype declaration
++ */
++void log_buf_init(void);
++void log_buf_write(const struct msg_block_t *msg_block, int32_t msg_block_num);
++#ifdef RCAR_DEBUG_LOG
++void log_debug_send(const struct msg_block_t *msg_block, int32_t msg_block_num);
++#endif /* RCAR_DEBUG_LOG */
++
++#endif /* RCAR_LOG_FUNC_H */
+diff --git a/core/arch/arm/plat-rcar_gen5/rcar_version.h b/core/arch/arm/plat-rcar_gen5/rcar_version.h
+new file mode 100644
+index 000000000..e22c36e30
+--- /dev/null
++++ b/core/arch/arm/plat-rcar_gen5/rcar_version.h
+@@ -0,0 +1,13 @@
++/* SPDX-License-Identifier: BSD-2-Clause */
++/*
++ * Copyright (c) 2021-2022, Renesas Electronics Corporation.
++ */
++
++#ifndef RCAR_VERSION_H
++#define RCAR_VERSION_H
++
++#include <stdint.h>
++
++#define VERSION_OF_RENESAS	"0.10.0"
++
++#endif /* RCAR_VERSION_H */
+diff --git a/core/arch/arm/plat-rcar_gen5/romapi_call.S b/core/arch/arm/plat-rcar_gen5/romapi_call.S
+new file mode 100644
+index 000000000..975eddbe6
+--- /dev/null
++++ b/core/arch/arm/plat-rcar_gen5/romapi_call.S
+@@ -0,0 +1,98 @@
++/* SPDX-License-Identifier: BSD-2-Clause */
++/*
++ * Copyright (c) 2021, EPAM Systems
++ */
++
++#include <asm.S>
++#include <arm.h>
++#include <arm64_macros.S>
++#include <generated/asm-defines.h>
++#include <kernel/cache_helpers.h>
++
++/* uint32_t __plat_romapi_wrapper(paddr_t func, uint64_t arg1, uint64_t arg2,
++ *				  uint64_t arg3)
++ * Call MaskROM function func(arg1, arg2, arg3).
++ * We need to disable MMU before calling any MaskROM API functions
++ */
++FUNC __plat_romapi_wrapper , : , .identity_map
++
++	push	fp,  lr
++	push	x19, x20
++	push	x21, x22
++	push	x23, x24
++
++	mov	x19, x0
++	mov	x20, x1
++	mov	x21, x2
++	mov	x22, x3
++
++	/* Get PA of stack pointer */
++	mov	x0, sp
++#ifdef CFG_CORE_ASLR
++	/*
++	 * We are running at identity location, so we can't use bl there,
++	 * because assembler will generate relative address to virt_to_phys(),
++	 * which is not identity mapped.
++	 */
++	adr_l   x9, virt_to_phys
++	ldr     x10, boot_mmu_config + CORE_MMU_CONFIG_MAP_OFFSET
++	add     x9, x9, x10
++	blr	x9
++#else
++	bl	virt_to_phys
++#endif
++	mov	x23, x0
++
++	/* We about to disable MMU. Make sure that all writes reached memory */
++	mov     x0, #DCACHE_OP_CLEAN
++#ifdef CFG_CORE_ASLR
++	/* See the comment above */
++	adr_l   x9, dcache_op_all
++	ldr     x10, boot_mmu_config + CORE_MMU_CONFIG_MAP_OFFSET
++	add     x9, x9, x10
++	blr	x9
++#else
++	bl	dcache_op_all
++#endif
++
++	/* Disable MMU */
++	mrs	x9, sctlr_el1
++	bic	x9, x9, #SCTLR_M
++	bic	x9, x9, #SCTLR_C
++	msr	sctlr_el1, x9
++	isb
++	/* Invalidate instruction cache and branch predictor */
++	ic	ialluis
++	dsb	ish	/* ensure that maintenance operations are seen */
++	isb
++
++	/* Save old SP to x24 and switch to a new stack */
++	mov	x24, sp
++	mov	sp, x23
++
++	/* call the function */
++	mov	x0, x20 	/* x20: uint64_t arg1 */
++	mov	x1, x21		/* x21: uint64_t arg2 */
++	mov	x2, x22		/* x22: uint64_t arg3 */
++	blr	x19		/* x19: paddr_t func */
++
++	/* restore sp */
++	mov	sp, x24
++
++	/* Enable MMU */
++	mrs	x9, sctlr_el1
++	orr	x9, x9, #SCTLR_M
++	orr	x9, x9, #SCTLR_C
++	msr	sctlr_el1, x9
++	isb
++
++	/* Invalidate instruction cache and branch predictor */
++	ic	iallu
++	isb
++
++	pop	x23, x24
++	pop	x21, x22
++	pop	x19, x20
++	pop	fp, lr
++	ret
++END_FUNC __plat_romapi_wrapper
+diff --git a/core/arch/arm/plat-rcar_gen5/sub.mk b/core/arch/arm/plat-rcar_gen5/sub.mk
+new file mode 100644
+index 000000000..603f8b58c
+--- /dev/null
++++ b/core/arch/arm/plat-rcar_gen5/sub.mk
+@@ -0,0 +1,14 @@
++global-incdirs-y += .
++srcs-y += main.c
++srcs-y += rcar_log_func.c
++# Copy the base file - /core/arch/arm/kernel/
++ifneq ($(CFG_SCIF),y)
++srcs-y += trace_ext.c
++WITH_TRACE_EXT := n
++else
++WITH_TRACE_EXT := y
++endif
++
++srcs-${CFG_RCAR_ROMAPI} += romapi.c
++srcs-${CFG_RCAR_ROMAPI} += romapi_call.S
++srcs-${CFG_RCAR_ROMAPI} += hw_rng.c
+diff --git a/core/arch/arm/plat-rcar_gen5/trace_ext.c b/core/arch/arm/plat-rcar_gen5/trace_ext.c
+new file mode 100644
+index 000000000..662bc9f1c
+--- /dev/null
++++ b/core/arch/arm/plat-rcar_gen5/trace_ext.c
+@@ -0,0 +1,93 @@
++// SPDX-License-Identifier: BSD-2-Clause
++/*
++ * Copyright (c) 2014, Linaro Limited
++ * Copyright (c) 2015-2020, Renesas Electronics Corporation
++ */
++#include <stdio.h>
++#include <string.h>
++#include <kernel/spinlock.h>
++#include <kernel/tee_time.h>
++#include "rcar_log_func.h"
++#include "rcar-common.h"
++
++const char trace_ext_prefix[] = "TEE-CORE";
++int trace_level = TRACE_LEVEL;
++
++void trace_ext_puts(const char *str)
++{
++	int8_t time_buf[LOG_TIME_BUF_MAX_SIZE] = {0};
++	size_t time_len = 0U;
++	TEE_Time sys_time = {0U, 0U};
++	TEE_Result ret;
++	int32_t res;
++	struct msg_block_t msg_block[MSG_BLK_MAX_NUM];
++	int32_t msg_block_num;
++	uint32_t exceptions;
++#ifdef RCAR_DEBUG_LOG
++	const int8_t TERM_LOG_PREFIX[] = "[OP-TEE]";
++	const size_t TERM_LOG_PREFIX_LEN = sizeof(TERM_LOG_PREFIX) - 1U;
++	size_t log_sum_size = 0U;
++	int32_t i;
++#endif
++
++	if ((str != NULL) && (log_secram_header != NULL)) {
++		exceptions = cpu_spin_lock_xsave(&log_spin_lock);
++		cpu_id_run_log = (int32_t)get_core_pos();
++
++		ret = tee_time_get_sys_time(&sys_time);
++		if (ret == (TEE_Result)TEE_SUCCESS) {
++			res = snprintf((char *)time_buf, sizeof(time_buf),
++				"[%u.%06u][%d]",
++				sys_time.seconds,
++				sys_time.millis * 1000U,
++				//(int32_t)get_core_pos());
++				cpu_id_run_log);
++			if (0 < res) {
++				time_len = (size_t)res;
++			}
++		}
++
++		msg_block[SECRAM_IDX_TIME].addr = time_buf;
++		msg_block[SECRAM_IDX_TIME].size = time_len;
++		msg_block[SECRAM_IDX_MESG].addr = (const int8_t *)str;
++		msg_block[SECRAM_IDX_MESG].size = strlen(str);
++		msg_block_num = SECRAM_MSG_BLK_NUM;
++
++		log_buf_write(msg_block, msg_block_num);
++
++		cpu_spin_unlock_xrestore(&log_spin_lock, exceptions);
++
++#ifdef RCAR_DEBUG_LOG
++		if (is_normal_world_initialized != 0) {
++			msg_block[TRMLOG_IDX_PRFX].addr = TERM_LOG_PREFIX;
++			msg_block[TRMLOG_IDX_PRFX].size = TERM_LOG_PREFIX_LEN;
++			msg_block[TRMLOG_IDX_TIME].addr = time_buf;
++			msg_block[TRMLOG_IDX_TIME].size = time_len;
++			msg_block[TRMLOG_IDX_MESG].addr = (const int8_t *)str;
++			msg_block[TRMLOG_IDX_MESG].size = strlen(str);
++			msg_block_num = TRMLOG_MSG_BLK_NUM;
++
++			/* Log size is limited to 256 byte */
++			for (i = 0; i < msg_block_num; i++) {
++				log_sum_size += msg_block[i].size;
++			}
++			if (log_sum_size > (size_t)MAX_PRINT_SIZE) {
++				msg_block[msg_block_num - 1].size -=
++					log_sum_size - (uint32_t)MAX_PRINT_SIZE;
++			}
++
++			if ((exceptions & (uint32_t)THREAD_EXCP_NATIVE_INTR) == 0U) {
++				/* User context */
++				log_debug_send(msg_block, msg_block_num);
++			} else {
++				/* Interrupt context */
++			}
++		}
++#endif
++	}
++}
++
++int trace_ext_get_thread_id(void)
++{
++	return -1;
++}
+diff --git a/core/drivers/gic.c b/core/drivers/gic.c
+index 0913da6ec..b8fcac59d 100644
+--- a/core/drivers/gic.c
++++ b/core/drivers/gic.c
+@@ -123,7 +123,7 @@
+ #define GICD_SGIR_NSATT_SHIFT			15
+ #define GICD_SGIR_CPU_TARGET_LIST_SHIFT		16
+ 
+-struct gic_data {
++/*struct gic_data {
+ 	vaddr_t gicc_base;
+ 	vaddr_t gicd_base;
+ #if defined(CFG_ARM_GICV3)
+@@ -136,8 +136,9 @@ struct gic_data {
+ 	struct itr_chip chip;
+ };
+ 
++static*/ struct gic_data gic_data __nex_bss;
++
+ static bool gic_primary_done __nex_bss;
+-static struct gic_data gic_data __nex_bss;
+ 
+ static void gic_op_add(struct itr_chip *chip, size_t it, uint32_t type,
+ 		       uint32_t prio);
+@@ -250,6 +251,8 @@ static void gicv3_sync_redist_config(struct gic_data *gd)
+ 
+ 	grp0 = io_read32(gicr_base + GICR_IGROUPR0);
+ 	gmod0 = io_read32(gicr_base + GICR_IGRPMODR0);
++	gd->per_cpu_group_status = grp0;
++	gd->per_cpu_group_modifier = gmod0;
+ 	for (n = GIC_SGI_SEC_BASE; n < GIC_SPI_BASE; n++) {
+ 		/* Ignore matching bits */
+ 		if (!(BIT32(n) & (grp0 ^ gd->per_cpu_group_status)) &&
+@@ -274,10 +277,12 @@ static void gicv3_sync_redist_config(struct gic_data *gd)
+ 			grp0 |= BIT32(n);
+ 		else
+ 			grp0 &= ~BIT32(n);
++
+ 		if (BIT32(n) & gd->per_cpu_group_modifier)
+ 			gmod0 |= BIT32(n);
+ 		else
+ 			gmod0 &= ~BIT32(n);
++
+ 	}
+ 
+ 	if (need_sync) {
+@@ -494,7 +499,7 @@ static void gic_init_base_addr(paddr_t gicc_base_pa, paddr_t gicd_base_pa,
+ 	struct gic_data *gd = &gic_data;
+ 	vaddr_t gicc_base = 0;
+ 	vaddr_t gicd_base = 0;
+-	uint32_t vers __maybe_unused = 0;
++	uint32_t vers = 0;
+ 
+ 	assert(cpu_mmu_enabled());
+ 
+diff --git a/core/drivers/scif.c b/core/drivers/scif.c
+index 32c382d6c..88504f434 100644
+--- a/core/drivers/scif.c
++++ b/core/drivers/scif.c
+@@ -26,25 +26,79 @@
+  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+  * POSSIBILITY OF SUCH DAMAGE.
+  */
++#include <stdio.h>
+ #include <drivers/scif.h>
+ #include <io.h>
+ #include <keep.h>
+ #include <util.h>
+ 
+-#define SCIF_SCSCR		(0x08)
+-#define SCIF_SCFSR		(0x10)
+-#define SCIF_SCFTDR		(0x0C)
+-#define SCIF_SCFCR		(0x18)
+-#define SCIF_SCFDR		(0x1C)
++#include <drivers/scif_register.h>
++#include <drivers/hscif_register.h>
++#include <mm/core_mmu.h>
+ 
+-#define SCSCR_TE		BIT(5)
+-#define SCFSR_TDFE		BIT(5)
+-#define SCFSR_TEND		BIT(6)
++#define SCSCR_TE BIT(5)
++#define SCFSR_TDFE BIT(5)
++#define SCFSR_TEND BIT(6)
+ 
+-#define SCFDR_T_SHIFT		8
++#define SCFDR_T_SHIFT 8
+ 
+-#define SCIF_TX_FIFO_SIZE	16
++#define SCIF_TX_FIFO_SIZE 16
+ 
++/* Define Macro */
++/* SCIF/HSCIF clock speed */
++#define MODEMR_SCIF_DLMODE (0x00000000U)
++#define MODEMR_HSCIF_DLMODE_921600 (0x00000200U)
++#define MODEMR_HSCIF_DLMODE_1843200 (0x00000400U)
++#define MODEMR_HSCIF_DLMODE_3000000 (0x00000600U)
++
++#define SCIF_SCSCR_TE_EN (uint16_t)((uint16_t)1U << 5U)
++#define SCIF_SCSCR_RE_EN (uint16_t)((uint16_t)1U << 4U)
++#define SCIF_SCSCR_TE_DE (uint16_t)((uint16_t)0U << 5U)
++#define SCIF_SCSCR_RE_DE (uint16_t)((uint16_t)0U << 4U)
++#define SCIF_SCSCR_CKE (uint16_t)((uint16_t)1U << 0U)
++#define SCIF_SCSCR_CKE_EXT_CLK (uint16_t)((uint16_t)2U << 0U)
++#define SCIF_SCSCR_INIT_DATA (uint16_t)(SCIF_SCSCR_TE_EN | SCIF_SCSCR_RE_EN)
++#define SCIF_SCSCR_INIT (uint16_t)(SCIF_SCSCR_TE_DE | SCIF_SCSCR_RE_DE)
++#define SCIF_SCSCR_HW_INIT (uint16_t)(0x0000U)
++
++#define SCIF_SCFCR_TFRST_EN     (uint16_t)((uint16_t)1U << 2U)
++#define SCIF_SCFCR_RFRS_EN      (uint16_t)((uint16_t)1U << 1U)
++#define SCIF_SCFCR_RESET_FIFO   (uint16_t)(SCIF_SCFCR_TFRST_EN | SCIF_SCFCR_RFRS_EN)
++#define SCIF_SCFSR_INIT_DATA    (uint16_t)(0x0000U)
++
++
++#define SCIF_SCLSR_INIT_DATA (uint16_t)(0x0000U)
++#define SCIF_SCSMR_RSET (uint16_t)(0x0000U)
++#define SCIF_SCSMR_CHR (uint16_t)((uint16_t)1U << 6U)
++#define SCIF_SCSMR_PE (uint16_t)((uint16_t)1U << 5U)
++#define SCIF_SCSMR_STOP (uint16_t)((uint16_t)1U << 3U)
++#define SCIF_SCSMR_CKS (uint16_t)((uint16_t)3U << 0U)
++#define SCIF_SCSMR_INIT_DATA                                            \
++	~((uint16_t)(SCIF_SCSMR_CHR | SCIF_SCSMR_PE | SCIF_SCSMR_STOP | \
++		     SCIF_SCSMR_CKS))
++
++/* Pclk(66MHz)/1, 115.2kbps*/
++/* N = 66/(66/2*115200)*10^4-1 =17=> 0x11 */
++#define SCIF_SCBRR_115200BPS (uint8_t)(0x11U)
++#define HSCIF_SCBRR_BAU = 10000
++/* Pclk(266MHz)/1, 921.6kbps*/
++/* N = 266/(8*2*921600)*10^6-1 =17=> 0x11 */
++#define HSCIF_SCBRR_921600BPS (uint8_t)(0x11U)
++/* Pclk(266MHz)/1, 1.8432Mbps*/
++/* N = 266/(8*2*1843200)*10^6-1 =8=> 0x08 */
++#define HSCIF_SCBRR_1843200BPS (uint8_t)(0x08U)
++
++#define HSCIF_HSSRR_SRE (uint16_t)(1U << 15U)
++#define HSCIF_HSSRR_SRCYC (uint16_t)(0x1FU << 0U)
++#define HSCIF_HSSRR_SRCYC8 (uint16_t)(7U << 0U) /* Sampling rate 8-1 */
++#define HSCIF_HSSRR_VAL (uint16_t)(HSCIF_HSSRR_SRE | HSCIF_HSSRR_SRCYC8)
++
++#define HSCIF_DL_DIV1 (uint16_t)(1U << 0U)
++#define HSCIF_CKS_CKS (uint16_t)(1U << 15U)
++#define HSCIF_CKS_XIN (uint16_t)(1U << 14U)
++#define HSCIF_CKS_SC_CLK_EXT ~((uint16_t)(HSCIF_CKS_CKS | HSCIF_CKS_XIN))
++
++static void hscif_console_putc(struct serial_chip *chip, uint8_t outchar);
+ static vaddr_t chip_to_base(struct serial_chip *chip)
+ {
+ 	struct scif_uart_data *pd =
+@@ -52,44 +106,178 @@ static vaddr_t chip_to_base(struct serial_chip *chip)
+ 
+ 	return io_pa_or_va(&pd->base, SCIF_REG_SIZE);
+ }
+-
+-static void scif_uart_flush(struct serial_chip *chip)
++#if(0)
++	static void scif_uart_flush(struct serial_chip *chip)
++	{
++		vaddr_t base = chip_to_base(chip);
++		while (!(io_read16(base + SCIF_SCFSR) & SCFSR_TEND))
++			;
++	}
++#endif
++static void scif_uart_flush(struct serial_chip __maybe_unused *chip)
+ {
+-	vaddr_t base = chip_to_base(chip);
+-
+-	while (!(io_read16(base + SCIF_SCFSR) & SCFSR_TEND))
+-		;
++	/*
++	 do not anything
++	*/
+ }
+-
+-static void scif_uart_putc(struct serial_chip *chip, int ch)
++static void hscif_uart_flush(struct serial_chip __maybe_unused *chip)
+ {
+-	vaddr_t base = chip_to_base(chip);
++	/*
++	 do not anything
++	*/
++}
+ 
++static void scif_uart_putc(struct serial_chip __maybe_unused *chip, uint8_t ch)
++{
++	static uint8_t remain = 0;
+ 	/* Wait until there is space in the FIFO */
+-	while ((io_read16(base + SCIF_SCFDR) >> SCFDR_T_SHIFT) >=
+-		SCIF_TX_FIFO_SIZE)
+-		;
+-	io_write8(base + SCIF_SCFTDR, ch);
+-	io_clrbits16(base + SCIF_SCFSR, SCFSR_TEND | SCFSR_TDFE);
++	while (0 == remain) {
++		remain = 128 - (io_read16(SCIF_BASE + SCIF_SCFDR) >> SCFDR_T_SHIFT);
++		if (remain < 64) {
++			remain = 0;
++	} else {
++			remain -= 64;
++		}
++	}
++	io_write8(SCIF_BASE + SCIF_SCFTDR, ch);	/* Transfer one character */
++
++	remain--;
+ }
++static void hscif_console_putc(struct serial_chip *chip, uint8_t outchar)
++{
++	static uint8_t remain = 0;
++	bool mmu_enabled = cpu_mmu_enabled();
+ 
++	if(mmu_enabled)
++	{
++		vaddr_t base = chip_to_base(chip);
++		while (0 == remain) {
++		remain = 128 - (io_read16(base + HSCIF_HSFDR_OFFSET) >> SCFDR_T_SHIFT);
++			if (remain < 64) {
++				remain = 0;
++			} else {
++				remain -= 64;
++			}
++		}
++		io_write8(base + HSCIF_HSFTDR_OFFSET, outchar);	/* Transfer one character */
++	}
++	else
++	{
++		/* Wait until there is space in the FIFO */
++		while (0 == remain) {
++			remain = 128 - (io_read16(HSCIF_HSFDR) >> SCFDR_T_SHIFT);
++			if (remain < 64) {
++				remain = 0;
++			} else {
++				remain -= 64;
++			}
++		}
++		io_write8(HSCIF_HSFTDR, outchar);	/* Transfer one character */
++	}
++	remain--;
++}
++#if(0)
++	static void scif_uart_putc(struct serial_chip *chip, uint8_t ch)
++	{
++		vaddr_t base = chip_to_base(chip);
++		/* Wait until there is space in the FIFO */
++		while ((io_read16(base + SCIF_SCFDR) >> SCFDR_T_SHIFT) >=
++				SCIF_TX_FIFO_SIZE)
++			;
++		io_write8(base + SCIF_SCFTDR, ch);
++		io_clrbits16(base + SCIF_SCFSR, SCFSR_TEND | SCFSR_TDFE);
++	}
++#endif
+ static const struct serial_ops scif_uart_ops = {
+ 	.flush = scif_uart_flush,
+ 	.putc = scif_uart_putc,
+ };
++static const struct serial_ops hscif_uart_ops = {
++	.flush = hscif_uart_flush,
++	.putc = hscif_console_putc,
++};
+ DECLARE_KEEP_PAGER(scif_uart_ops);
++DECLARE_KEEP_PAGER(hscif_uart_ops);
+ 
++void hscif_uart_init(struct scif_uart_data *pd, paddr_t pbase)
++{
++	pd->base.pa = pbase;
++	pd->chip.ops = &hscif_uart_ops;
++	hscif_console_init();
++	hscif_uart_flush(&pd->chip);
++}
+ void scif_uart_init(struct scif_uart_data *pd, paddr_t pbase)
+ {
+-	vaddr_t base;
+-
+ 	pd->base.pa = pbase;
+ 	pd->chip.ops = &scif_uart_ops;
++	scif_console_init();
++	scif_uart_flush(&pd->chip);
++}
++void scif_console_init(void)
++{
++	uint16_t reg;
+ 
+-	base = io_pa_or_va(&pd->base, SCIF_REG_SIZE);
++	/* clear SCR.TE & SCR.RE*/
++	io_write16(SCIF_SCSCR, SCIF_SCSCR_HW_INIT);
++	/* reset tx-fifo, reset rx-fifo. */
++	reg = io_read16(SCIF_SCFCR);
++	reg |= SCIF_SCFCR_RESET_FIFO;
++	io_write16(SCIF_SCFCR, reg);
+ 
+-	/* Set Transmit Enable in Control register */
+-	io_setbits16(base + SCIF_SCSCR, SCSCR_TE);
++	/* clear ORER bit */
++	io_write16(SCIF_SCLSR, SCIF_SCLSR_INIT_DATA);
++	/* clear all error bit  */
++	io_write16(SCIF_SCFSR, SCIF_SCFSR_INIT_DATA);
++	/*set bit CKE[1:0] in SCSCR*/
++	io_write16(SCIF_SCSCR,SCIF_SCSCR_CKE);
++	/* 8bit data, no-parity, 1 stop, Po/1 */
++	// reg = io_read16(SCIF_SCSMR);
++	// reg &= SCIF_SCSMR_INIT_DATA;
++	// io_write16(SCIF_SCSMR, SCIF_SCSMR_INIT_DATA);
++	/* internal clock, SC_CLK pin unused for output pin */
++	// io_write16(SCIF_SCSCR, SCIF_SCSCR_HW_INIT);
+ 
+-	scif_uart_flush(&pd->chip);
++	/* Baud rate 115200bps*/
++	io_write8(SCIF_SCBRR, SCIF_SCBRR_115200BPS);
++
++	//micro_wait(10U); /* 10us */
++
++	/* reset-off tx-fifo, rx-fifo. */
++	// reg = io_read16(SCIF_SCFCR);
++	// reg &= ~(SCIF_SCFCR_RESET_FIFO);
++	// io_write16(SCIF_SCFCR, reg);
++	/* enable TE, RE; SC_CLK=no output */
++	reg = io_read16(SCIF_SCSCR);
++	reg |= SCIF_SCSCR_INIT_DATA;
++	io_write16(SCIF_SCSCR, reg);
++	io_setbits16(SCIF_BASE + SCIF_SCSCR, SCSCR_TE);
++	/* Set the pointer to a function that outputs one character. */
++	// scif_uart_putc;  // call function to transmit message
++}
++void hscif_console_init(void)
++{
++	uint16_t reg;
++
++	io_write16(HSCIF_HSSCR, SCIF_SCSCR_HW_INIT);
++	reg = io_read16(HSCIF_HSSCR);
++	reg |= SCIF_SCSCR_INIT_DATA;
++	io_write16(HSCIF_HSSCR, reg);
++	/* enable TE, RE; SC_CLK=no output */
++	io_setbits16(HSCIF_HSSCR, SCSCR_TE);
++}
++
++void display_log(void)
++{
++	uint8_t message[] = "This is example message\n";
++	struct serial_chip *chip = {0};
++	uint8_t *ptr_mesg = message;  // Assign the base address of the array to a pointer
++
++	uint8_t first_character = *ptr_mesg;    // Retrieves the first character 'n'
++	hscif_console_putc(chip, first_character);
++	for(long unsigned int i =0 ; i < sizeof(message); i++)
++	{
++		/*this function to wait for diplay log message*/
++		hscif_console_putc(chip, *ptr_mesg);
++		ptr_mesg++;
++	}
+ }
+diff --git a/core/include/console.h b/core/include/console.h
+index c5962839e..f9a05feab 100644
+--- a/core/include/console.h
++++ b/core/include/console.h
+@@ -11,7 +11,7 @@
+ 
+ 
+ void console_init(void);
+-void console_putc(int ch);
++void console_putc(uint8_t ch);
+ void console_flush(void);
+ 
+ void plat_console_init(void);
+diff --git a/core/include/drivers/gic.h b/core/include/drivers/gic.h
+index 498e3c8a7..ac52577ae 100644
+--- a/core/include/drivers/gic.h
++++ b/core/include/drivers/gic.h
+@@ -24,6 +24,22 @@
+ #define GIC_PPI_TO_ITNUM(x)	((x) + GIC_PPI_BASE)
+ #define GIC_SPI_TO_ITNUM(x)	((x) + GIC_SPI_BASE)
+ 
++#if defined(PLATFORM_rcar_gen5)
++struct gic_data {
++	vaddr_t gicc_base;
++	vaddr_t gicd_base;
++#if defined(CFG_ARM_GICV3)
++	vaddr_t gicr_base[CFG_TEE_CORE_NB_CORE];
++#endif
++	size_t max_it;
++	uint32_t per_cpu_group_status;
++	uint32_t per_cpu_group_modifier;
++	uint32_t per_cpu_enable;
++	struct itr_chip chip;
++};
++
++extern struct gic_data gic_data __nex_bss;
++#endif
+ /*
+  * Default lowest ID for secure SGIs, note that this does not account for
+  * interrupts donated to non-secure world with gic_init_donate_sgi_to_ns().
+diff --git a/core/include/drivers/hscif_register.h b/core/include/drivers/hscif_register.h
+new file mode 100644
+index 000000000..949b2e31c
+--- /dev/null
++++ b/core/include/drivers/hscif_register.h
+@@ -0,0 +1,50 @@
++/*******************************************************************************
++ * DISCLAIMER
++ * This software is supplied by Renesas Electronics Corporation and is only
++ * intended for use with Renesas products. No other uses are authorized. This
++ * software is owned by Renesas Electronics Corporation and is protected under
++ * all applicable laws, including copyright laws.
++ * THIS SOFTWARE IS PROVIDED "AS IS" AND RENESAS MAKES NO WARRANTIES REGARDING
++ * THIS SOFTWARE, WHETHER EXPRESS, IMPLIED OR STATUTORY, INCLUDING BUT NOT
++ * LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE
++ * AND NON-INFRINGEMENT. ALL SUCH WARRANTIES ARE EXPRESSLY DISCLAIMED.
++ * TO THE MAXIMUM EXTENT PERMITTED NOT PROHIBITED BY LAW, NEITHER RENESAS
++ * ELECTRONICS CORPORATION NOR ANY OF ITS AFFILIATED COMPANIES SHALL BE LIABLE
++ * FOR ANY DIRECT, INDIRECT, SPECIAL, INCIDENTAL OR CONSEQUENTIAL DAMAGES FOR
++ * ANY REASON RELATED TO THIS SOFTWARE, EVEN IF RENESAS OR ITS AFFILIATES HAVE
++ * BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
++ * Renesas reserves the right, without notice, to make changes to this software
++ * and to discontinue the availability of this software. By using this software,
++ * you agree to the additional terms and conditions found by accessing the
++ * following link:
++ * http://www.renesas.com/disclaimer
++ * Copyright 2021-2022 Renesas Electronics Corporation All rights reserved.
++ *******************************************************************************/
++
++/*******************************************************************************
++ * DESCRIPTION   : HSCIF register header
++ ******************************************************************************/
++
++#include <platform_config.h>
++#ifndef HSCIF_REGISTER_H_
++#define HSCIF_REGISTER_H_
++
++/* HSCIF0 base address */
++#define HSCIF0_BASE     (0xC0710000U)
++
++#define HSCIF_HSSMR     (HSCIF0_BASE + 0x0000U) /*  16  Serial mode register */
++#define HSCIF_HSBRR     (HSCIF0_BASE + 0x0004U) /*  8   Bit rate register */
++#define HSCIF_HSSCR     (HSCIF0_BASE + 0x0008U) /*  16  Serial control register */
++#define HSCIF_HSFTDR    (HSCIF0_BASE + 0x000CU) /*  8   Transmit FIFO data register */
++#define HSCIF_HSFSR     (HSCIF0_BASE + 0x0010U) /*  16  Serial status register */
++#define HSCIF_HSFCR     (HSCIF0_BASE + 0x0018U) /*  16  FIFO control register */
++#define HSCIF_HSFDR     (HSCIF0_BASE + 0x001CU) /*  16  FIFO Data count register (palladium debug) */
++#define HSCIF_HSLSR     (HSCIF0_BASE + 0x0024U) /*  16  Line status register */
++#define HSCIF_DL        (HSCIF0_BASE + 0x0030U) /*  16  Frequency division register */
++#define HSCIF_CKS       (HSCIF0_BASE + 0x0034U) /*  16  Clock Select register */
++#define HSCIF_HSSRR     (HSCIF0_BASE + 0x0040U) /*  16  Sampling rate register */
++
++/*Define some macro after enable mmu*/
++#define HSCIF_HSFDR_OFFSET     (0x001CU) /*  16  FIFO Data count register (palladium debug) */
++#define HSCIF_HSFTDR_OFFSET    (0x000CU) /*  8   Transmit FIFO data register */
++#endif /* HSCIF_REGISTER_H_ */
+diff --git a/core/include/drivers/scif.h b/core/include/drivers/scif.h
+index 7cb3ac015..45f3afa49 100644
+--- a/core/include/drivers/scif.h
++++ b/core/include/drivers/scif.h
+@@ -40,5 +40,8 @@ struct scif_uart_data {
+ };
+ 
+ void scif_uart_init(struct scif_uart_data *pd, paddr_t base);
+-
+-#endif /* __DRIVERS_SCIF_H */
++void hscif_uart_init(struct scif_uart_data *pd, paddr_t base);
++void scif_console_init(void);
++void hscif_console_init(void);
++void display_log(void);
++#endif /* SCIF */
+diff --git a/core/include/drivers/scif_register.h b/core/include/drivers/scif_register.h
+new file mode 100644
+index 000000000..2cad38715
+--- /dev/null
++++ b/core/include/drivers/scif_register.h
+@@ -0,0 +1,46 @@
++/*******************************************************************************
++ * DISCLAIMER
++ * This software is supplied by Renesas Electronics Corporation and is only
++ * intended for use with Renesas products. No other uses are authorized. This
++ * software is owned by Renesas Electronics Corporation and is protected under
++ * all applicable laws, including copyright laws.
++ * THIS SOFTWARE IS PROVIDED "AS IS" AND RENESAS MAKES NO WARRANTIES REGARDING
++ * THIS SOFTWARE, WHETHER EXPRESS, IMPLIED OR STATUTORY, INCLUDING BUT NOT
++ * LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE
++ * AND NON-INFRINGEMENT. ALL SUCH WARRANTIES ARE EXPRESSLY DISCLAIMED.
++ * TO THE MAXIMUM EXTENT PERMITTED NOT PROHIBITED BY LAW, NEITHER RENESAS
++ * ELECTRONICS CORPORATION NOR ANY OF ITS AFFILIATED COMPANIES SHALL BE LIABLE
++ * FOR ANY DIRECT, INDIRECT, SPECIAL, INCIDENTAL OR CONSEQUENTIAL DAMAGES FOR
++ * ANY REASON RELATED TO THIS SOFTWARE, EVEN IF RENESAS OR ITS AFFILIATES HAVE
++ * BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
++ * Renesas reserves the right, without notice, to make changes to this software
++ * and to discontinue the availability of this software. By using this software,
++ * you agree to the additional terms and conditions found by accessing the
++ * following link:
++ * http://www.renesas.com/disclaimer
++ * Copyright 2021-2022 Renesas Electronics Corporation All rights reserved.
++ *******************************************************************************/
++
++/*******************************************************************************
++ * DESCRIPTION   : SCIF register header
++ ******************************************************************************/
++
++
++#ifndef SCIF_REGISTER_H_
++#define SCIF_REGISTER_H_
++
++
++/* SCIF ch0 base address */
++#define SCIF_BASE   (0xC0700000U)
++
++#define SCIF_SCSMR  (SCIF_BASE + 0x0000U)   /*  16  Serial mode register */
++#define SCIF_SCBRR  (SCIF_BASE + 0x0004U)   /*  8   Bit rate register */
++#define SCIF_SCSCR  (SCIF_BASE + 0x0008U)   /*  16  Serial control register */
++#define SCIF_SCFTDR (SCIF_BASE + 0x000CU)   /*  8   Transmit FIFO data register */
++#define SCIF_SCFSR  (SCIF_BASE + 0x0010U)   /*  16  Serial status register */
++#define SCIF_SCFCR  (SCIF_BASE + 0x0018U)   /*  16  FIFO control register */
++#define SCIF_SCFDR  (SCIF_BASE + 0x001CU)   /*  16  FIFO Data count register*/
++#define SCIF_SCLSR  (SCIF_BASE + 0x0024U)   /*  16  Line status register */
++#define SCIF_CKS    (SCIF_BASE + 0x0034U)   /*  16  Clock Select register */
++
++#endif /* SCIF_REGISTER_H_ */
+diff --git a/core/include/drivers/serial.h b/core/include/drivers/serial.h
+index 2a1e07482..5c4bbee5d 100644
+--- a/core/include/drivers/serial.h
++++ b/core/include/drivers/serial.h
+@@ -17,7 +17,7 @@ struct serial_chip {
+ 
+ struct serial_ops {
+ 	/* Mandatory handler */
+-	void (*putc)(struct serial_chip *chip, int ch);
++	void (*putc)(struct serial_chip *chip, uint8_t ch);
+ 	/* Optional handlers */
+ 	void (*flush)(struct serial_chip *chip);
+ 	bool (*have_rx_data)(struct serial_chip *chip);
+diff --git a/core/include/dt-bindings/interrupt-controller/arm-gic.h b/core/include/dt-bindings/interrupt-controller/arm-gic.h
+index 35b6f69b7..31a977ee7 100644
+--- a/core/include/dt-bindings/interrupt-controller/arm-gic.h
++++ b/core/include/dt-bindings/interrupt-controller/arm-gic.h
+@@ -17,7 +17,7 @@
+  * Interrupt specifier cell 2.
+  * The flags in irq.h are valid, plus those below.
+  */
+-#define GIC_CPU_MASK_RAW(x) ((x) << 8)
+-#define GIC_CPU_MASK_SIMPLE(num) GIC_CPU_MASK_RAW((1 << (num)) - 1)
++#define GIC_CPU_MASK_RAW(x) ((uint32_t)(x) << 8)
++#define GIC_CPU_MASK_SIMPLE(num) GIC_CPU_MASK_RAW((1ULL << (num)) - 1)
+ 
+ #endif
+diff --git a/core/include/kernel/interrupt.h b/core/include/kernel/interrupt.h
+index 2b0a51d18..a6a7a1eda 100644
+--- a/core/include/kernel/interrupt.h
++++ b/core/include/kernel/interrupt.h
+@@ -541,4 +541,7 @@ static inline TEE_Result interrupt_dt_get(const void *fdt, int node,
+ {
+ 	return interrupt_dt_get_by_index(fdt, node, 0, chip, itr_num);
+ }
++#ifdef PLATFORM_rcar_gen5
++void itr_set_all_cpu_mask(uint8_t cpu_mask);
++#endif
+ #endif /*__KERNEL_INTERRUPT_H*/
+diff --git a/core/kernel/console.c b/core/kernel/console.c
+index 3ce61f9ec..b33122730 100644
+--- a/core/kernel/console.c
++++ b/core/kernel/console.c
+@@ -34,7 +34,7 @@ void console_init(void)
+ 		plat_console_init();
+ }
+ 
+-void __weak console_putc(int ch)
++void __weak console_putc(uint8_t ch)
+ {
+ 	if (!serial_console)
+ 		return;
+diff --git a/core/kernel/interrupt.c b/core/kernel/interrupt.c
+index 4fe92bd55..6e9e1b3d8 100644
+--- a/core/kernel/interrupt.c
++++ b/core/kernel/interrupt.c
+@@ -349,4 +349,15 @@ TEE_Result interrupt_dt_get_by_name(const void *fdt, int node, const char *name,
+ 
+ 	return interrupt_dt_get_by_index(fdt, node, idx, chip, itr_num);
+ }
++
++#ifdef PLATFORM_rcar_gen5
++void itr_set_all_cpu_mask(uint8_t cpu_mask)
++{
++	struct itr_handler *h;
++
++	SLIST_FOREACH(h, &itr_main_chip->handlers, link) {
++		itr_main_chip->ops->set_affinity(itr_main_chip, h->it, cpu_mask);
++	}
++}
++#endif
+ #endif /*CFG_DT*/
+diff --git a/core/kernel/pm.c b/core/kernel/pm.c
+index efd553f14..9ad156dfd 100644
+--- a/core/kernel/pm.c
++++ b/core/kernel/pm.c
+@@ -35,20 +35,27 @@ static void verify_cb_args(struct pm_callback_handle *pm_hdl)
+ void register_pm_cb(struct pm_callback_handle *pm_hdl)
+ {
+ 	struct pm_callback_handle *ref = NULL;
+-	const char *name = pm_hdl->name;
++	const char *name;
++	const char *name_final;
+ 	size_t count = pm_cb_count;
+ 	uint32_t exceptions = 0;
+ 
+ 	verify_cb_args(pm_hdl);
+ 
+-	if (!name)
++	if (!pm_hdl->name)
+ 		name = no_name;
++	else
++		name = pm_hdl->name;
+ 
+ 	if (!is_unpaged((void *)name)) {
+-		name = strdup(name);
+-		if (!name)
++		name_final = strdup(name? name:no_name);
++		if (!name_final)
+ 			panic();
+ 	}
++	else
++	{
++		name_final = name;
++	}
+ 
+ 	exceptions = cpu_spin_lock_xsave(&pm_list_lock);
+ 
+@@ -58,7 +65,7 @@ void register_pm_cb(struct pm_callback_handle *pm_hdl)
+ 
+ 	ref[count] = *pm_hdl;
+ 	ref[count].flags = 0;
+-	ref[count].name = name;
++	ref[count].name = name_final;
+ 
+ 	pm_cb_count = count + 1;
+ 	pm_cb_ref = ref;
+diff --git a/core/kernel/sub.mk b/core/kernel/sub.mk
+index a8cdba2e8..254ca6afb 100644
+--- a/core/kernel/sub.mk
++++ b/core/kernel/sub.mk
+@@ -20,6 +20,7 @@ ifneq ($(CFG_CORE_FFA),y)
+ srcs-$(CFG_CORE_DYN_SHM) += msg_param.c
+ endif
+ srcs-y += panic.c
++#srcs-$(WITH_TRACE_EXT) += trace_ext.c
+ srcs-y += trace_ext.c
+ srcs-y += refcount.c
+ srcs-y += delay.c
+diff --git a/core/kernel/trace_ext.c b/core/kernel/trace_ext.c
+index 007d6c305..4adbe6aa5 100644
+--- a/core/kernel/trace_ext.c
++++ b/core/kernel/trace_ext.c
+@@ -11,15 +11,15 @@
+ #include <kernel/virtualization.h>
+ #include <mm/core_mmu.h>
+ 
+-const char trace_ext_prefix[] = "TC";
+-int trace_level __nex_data = TRACE_LEVEL;
++const char __weak trace_ext_prefix[] = "TC";
++int __weak trace_level __nex_data = TRACE_LEVEL;
+ static unsigned int puts_lock __nex_bss = SPINLOCK_UNLOCK;
+ 
+ void __weak plat_trace_ext_puts(const char *str __unused)
+ {
+ }
+ 
+-void trace_ext_puts(const char *str)
++void __weak trace_ext_puts(const char *str)
+ {
+ 	uint32_t itr_status = thread_mask_exceptions(THREAD_EXCP_ALL);
+ 	bool mmu_enabled = cpu_mmu_enabled();
+@@ -49,7 +49,7 @@ void trace_ext_puts(const char *str)
+ 	thread_unmask_exceptions(itr_status);
+ }
+ 
+-int trace_ext_get_thread_id(void)
++int __weak trace_ext_get_thread_id(void)
+ {
+ 	return thread_get_id_may_fail();
+ }
+diff --git a/core/mm/core_mmu.c b/core/mm/core_mmu.c
+index 5033a9faf..7214c5a65 100644
+--- a/core/mm/core_mmu.c
++++ b/core/mm/core_mmu.c
+@@ -21,6 +21,7 @@
+ #include <memtag.h>
+ #include <mm/core_memprot.h>
+ #include <mm/core_mmu.h>
++#include <mm/tee_mmu_types.h>
+ #include <mm/mobj.h>
+ #include <mm/pgt_cache.h>
+ #include <mm/phys_mem.h>
+@@ -900,6 +901,7 @@ static bool __maybe_unused map_is_pgdir(const struct tee_mmap_region *mm)
+ {
+ 	return mm->region_size == CORE_MMU_PGDIR_SIZE;
+ }
++#ifndef RCAR_MMU_DIRECT_MAPPING
+ 
+ static int cmp_mmap_by_lower_va(const void *a, const void *b)
+ {
+@@ -908,6 +910,7 @@ static int cmp_mmap_by_lower_va(const void *a, const void *b)
+ 
+ 	return CMP_TRILEAN(mm_a->va, mm_b->va);
+ }
++#endif
+ 
+ static void dump_mmap_table(struct memory_map *mem_map)
+ {
+@@ -1204,13 +1207,24 @@ static bool assign_mem_va_dir(vaddr_t tee_ram_va, struct memory_map *mem_map,
+ 	bool va_is_secure = true;
+ 	size_t n = 0;
+ 
++#ifdef RCAR_MMU_DIRECT_MAPPING
++	const paddr_t direct_map_area[][2] = {
++		{ MEMORY4_BASE, MEMORY4_SIZE }, /* TA area for verification address */
++		{ MEMORY9_BASE, MEMORY9_SIZE } /* RSIP-M FW Share Memory address */
++	};
++	const size_t dmnum = sizeof(direct_map_area) / sizeof(paddr_t) / 2;
++	size_t last;
++	paddr_t dmaddr;
++	paddr_t dmsize;
++	paddr_t rd;
++	bool va_is_direct = false;
++#endif
+ 	/*
+ 	 * tee_ram_va might equals 0 when CFG_CORE_ASLR=y.
+ 	 * 0 is by design an invalid va, so return false directly.
+ 	 */
+ 	if (!tee_ram_va)
+ 		return false;
+-
+ 	/* Clear eventual previous assignments */
+ 	for (n = 0; n < mem_map->count; n++)
+ 		mem_map->map[n].va = 0;
+@@ -1238,6 +1252,9 @@ static bool assign_mem_va_dir(vaddr_t tee_ram_va, struct memory_map *mem_map,
+ 	}
+ 
+ 	if (tee_ram_at_top) {
++#ifdef RCAR_MMU_DIRECT_MAPPING
++	panic(); 	/*Direct mapping is not supported*/
++#endif
+ 		/*
+ 		 * Map non-tee ram regions at addresses lower than the tee
+ 		 * ram region.
+@@ -1291,6 +1308,21 @@ static bool assign_mem_va_dir(vaddr_t tee_ram_va, struct memory_map *mem_map,
+ 
+ 			if (ROUNDUP_OVERFLOW(va, map->region_size, &va))
+ 				return false;
++#ifdef RCAR_MMU_DIRECT_MAPPING
++			for (n = 0; n < dmnum; n++) {
++				dmaddr = direct_map_area[n][0];
++				dmsize = direct_map_area[n][1];
++				rd = ROUNDDOWN((dmaddr), CORE_MMU_PGDIR_SIZE);
++				if (map->pa == rd) {
++					va_is_direct = true;
++				} else if ((va <= rd) &&
++				  ((va + map->size) >= (rd + dmsize))) {
++					va = rd + dmsize;
++				} else {
++					/* no operation */
++				}
++			}
++#endif
+ 			/*
+ 			 * Make sure that va is aligned with pa for
+ 			 * efficient pgdir mapping. Basically pa &
+@@ -1303,21 +1335,63 @@ static bool assign_mem_va_dir(vaddr_t tee_ram_va, struct memory_map *mem_map,
+ 				if (ADD_OVERFLOW(va, offs, &va))
+ 					return false;
+ 			}
+-
++#ifdef RCAR_MMU_DIRECT_MAPPING
++				if (!va_is_direct) {
++					map->va = va;
++					if (ADD_OVERFLOW(va, map->size, &va))
++						return false;
++				} else {
++					map->va = map->pa; /* 1-to-1 pa = va mapping */
++					va_is_direct = false;
++				}
++#else
+ 			map->va = va;
+ 			if (ADD_OVERFLOW(va, map->size, &va))
+ 				return false;
++#endif
+ 			if (va >= BIT64(core_mmu_get_va_width()))
+ 				return false;
+ 		}
+-	}
++#ifdef RCAR_MMU_DIRECT_MAPPING
++		last = 0;
++		for (n = 0; n < mem_map->count; n++) {
++			last++;
++		}
++		// for (map = memory_map; !core_mmap_is_end_of_table(map); map++) {
++		// 	last++;
++		// }
++		/*
++		 * The memory map should be sorted by virtual address
++		 * when this function returns. As we're assigning va in
++		 * the oposite direction we need to reverse the list.
++		 */
++		for (n = 0; n < last; n++) {
++			size_t o;
++			size_t min;
++
++			min = n;
++			for (o = n + 1U; o < last; o++) {
++				if (mem_map->map[min].va > mem_map->map[o].va) {
++					min = o;
++				}
++			}
++			if (n != min) {
++				struct tee_mmap_region r;
+ 
++				r = mem_map->map[n];
++				mem_map->map[n] = mem_map->map[min];
++				mem_map->map[min] = r;
++			}
++		}
++#endif
++	}
+ 	return true;
+ }
+ 
+ static bool assign_mem_va(vaddr_t tee_ram_va, struct memory_map *mem_map)
+ {
+ 	bool tee_ram_at_top = place_tee_ram_at_top(tee_ram_va);
++	EMSG("the value of tee_ram_at_top: %d",tee_ram_at_top);
+ 
+ 	/*
+ 	 * Check that we're not overlapping with the user VA range.
+@@ -1459,9 +1533,10 @@ static struct memory_map *init_mem_map(struct memory_map *mem_map,
+ 		panic();
+ 
+ out:
++#ifndef RCAR_MMU_DIRECT_MAPPING
+ 	qsort(mem_map->map, mem_map->count, sizeof(struct tee_mmap_region),
+ 	      cmp_mmap_by_lower_va);
+-
++#endif
+ 	dump_mmap_table(mem_map);
+ 
+ 	*ret_offs = offs;
+diff --git a/core/tee/tee_cryp_utl.c b/core/tee/tee_cryp_utl.c
+index cf03a5756..8c029dab2 100644
+--- a/core/tee/tee_cryp_utl.c
++++ b/core/tee/tee_cryp_utl.c
+@@ -210,8 +210,9 @@ static TEE_Result tee_cryp_init(void)
+ 		EMSG("Failed to initialize crypto API: %#" PRIx32, res);
+ 		panic();
+ 	}
++#ifndef CFG_CRYPT_HW_CRYPTOENGINE	/*For PLATFOMR_rcar_gen5*/
+ 	plat_rng_init();
+-
++#endif
+ 	dt_driver_crypt_init_complete();
+ 
+ 	return TEE_SUCCESS;
+diff --git a/lib/libutee/tee_api.c b/lib/libutee/tee_api.c
+index 4c9b2402b..3d3021dc9 100644
+--- a/lib/libutee/tee_api.c
++++ b/lib/libutee/tee_api.c
+@@ -11,6 +11,7 @@
+ #include <user_ta_header.h>
+ #include <utee_syscalls.h>
+ #include "tee_api_private.h"
++#include <tee_internal_api.h>
+ 
+ /*
+  * return a known non-NULL invalid pointer when the
+diff --git a/mk/config.mk b/mk/config.mk
+index 303e19cae..27e3e426f 100644
+--- a/mk/config.mk
++++ b/mk/config.mk
+@@ -963,7 +963,7 @@ ifneq ($(CFG_INSECURE),$(CFG_WARN_INSECURE))
+ $(error Inconsistent CFG_INSECURE=$(CFG_INSECURE) and CFG_WARN_INSECURE=$(CFG_WARN_INSECURE))
+ endif
+ endif # CFG_WARN_INSECURE defined
+-CFG_INSECURE ?= y
++CFG_INSECURE ?= n
+ 
+ ifneq ($(CFG_INSECURE),y)
+ ifneq ($(CFG_CORE_ASLR_SEED),)
+-- 
+2.34.1
+
