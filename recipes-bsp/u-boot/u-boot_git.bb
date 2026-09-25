@@ -9,14 +9,14 @@ DEPENDS += "lzop-native srecord-native"
 DEPENDS += "bc-native dtc-native python3-pyelftools-native gnutls-native"
 
 UBOOT_URL = "git://github.com/u-boot/u-boot.git"
-BRANCH = "master"
-SRCREV = "ece349ade2973e220f524ce59e59711cc919263f"
+BRANCH = "main"
+SRCREV = "a06e89ab05eaa2b8344d521319399333cd760ae5"
 LICENSE = "GPL-2.0-or-later"
 LIC_FILES_CHKSUM = "file://Licenses/README;md5=2ca5f2c35c8cc335f0a19756634782f1"
 
 SRC_URI = "${UBOOT_URL};branch=${BRANCH};protocol=https"
 
-PV = "v2026.07+git${SRCPV}"
+PV = "v2026.10-rc5+git${SRCPV}"
 
 UBOOT_SREC_SUFFIX = "srec"
 UBOOT_SREC ?= "u-boot-elf.${UBOOT_SREC_SUFFIX}"
