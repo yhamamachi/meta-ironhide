@@ -28,6 +28,10 @@ SRC_URI:append = " \
     file://ironhide.env;subdir=git/board/renesas/ironhide/ \
 "
 
+SRC_URI:append = " \
+    file://env-addr-change.cfg \
+"
+
 UBOOT_SREC_SUFFIX = "srec"
 UBOOT_SREC ?= "u-boot-elf.${UBOOT_SREC_SUFFIX}"
 UBOOT_SREC_CM33 ?= "u-boot-elf-cm33.${UBOOT_SREC_SUFFIX}"
