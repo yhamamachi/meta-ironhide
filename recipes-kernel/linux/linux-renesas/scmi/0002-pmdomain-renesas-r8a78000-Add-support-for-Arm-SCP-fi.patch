@@ -1,0 +1,48 @@
+From 50547c2c49b20bd437bf8721bc6bceb7f5006bfd Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Cl=C3=A9ment=20Le=20Goffic?= <legoffic.clement@gmail.com>
+Date: Mon, 24 Aug 2026 19:19:56 +0200
+Subject: [PATCH 2/6] pmdomain: renesas: r8a78000: Add support for Arm
+ SCP-firmware 2.16.0
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The Arm SCP-firmware server reports vendor "Renesas", sub-vendor
+"Renesas" and implementation version 0x02100000.
+Its SCMI reset and power domain numbering was compared against the SDK
+4.32 sources and found identical for all 815 reset domains and 255
+power domains, so it shares the map used since SDK 4.31.
+The sub-vendor comparison is dropped because it only re-checks what the
+implementation version already selects.
+
+Co-developed-by: Claude Fable 5 <noreply@anthropic.com>
+Signed-off-by: Clément Le Goffic <clegoffic@baylibre.com>
+---
+ drivers/pmdomain/renesas/r8a78000-mdlc.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/pmdomain/renesas/r8a78000-mdlc.c b/drivers/pmdomain/renesas/r8a78000-mdlc.c
+index 8bb06dd1b787..d2bd031dbcd7 100644
+--- a/drivers/pmdomain/renesas/r8a78000-mdlc.c
++++ b/drivers/pmdomain/renesas/r8a78000-mdlc.c
+@@ -526,8 +526,7 @@ static int r8a78000_mdlc_probe(struct platform_device *pdev)
+ 		goto fallback;
+ 	}
+ 
+-	if (strcmp(version.vendor_id, "Renesas") ||
+-	    strcmp(version.sub_vendor_id, "None")) {
++	if (strcmp(version.vendor_id, "Renesas")) {
+ 		dev_warn(dev, "Unsupported SCMI firmware %s/%s\n",
+ 			 version.vendor_id, version.sub_vendor_id);
+ 		goto fallback;
+@@ -1089,6 +1088,7 @@ static const struct fw_map r8a78000_mdlc_fw_map[] = {
+ 	{ 0x010d0000, r8a78000_mdlc_fw_4_31_0 },	/* SCP FW SDKv4.31.0 */
+ 	{ 0x010e0000, r8a78000_mdlc_fw_4_31_0 },	/* SCP FW SDKv4.32.0 */
+ 	{ 0x01100000, r8a78000_mdlc_fw_4_31_0 },	/* SCP FW SDKv4.36.0 */
++	{ 0x02100000, r8a78000_mdlc_fw_4_31_0 },	/* Arm SCP-firmware 2.16.0 */
+ 	{ /* sentinel */ }
+ };
+ 
+-- 
+2.43.0
+

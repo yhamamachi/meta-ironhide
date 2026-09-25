@@ -24,6 +24,15 @@ SRC_URI:append:ironhide = " \
     file://ironhide.cfg \
 "
 
+SRC_URI:append:ironhide = " \
+    file://scmi/0001-clk-renesas-r8a78000-Add-support-for-Arm-SCP-firmwar.patch \
+    file://scmi/0002-pmdomain-renesas-r8a78000-Add-support-for-Arm-SCP-fi.patch \
+    file://scmi/0003-soc-renesas-rcar-mfis-Clear-stale-doorbells-on-chann.patch \
+    file://scmi/0004-arm64-renesas-defconfig-Enable-the-Ethernet-Switch3-.patch \
+    file://scmi/0005-arm64-dts-renesas-ironhide-Keep-rswitch3-disabled.patch \
+    file://scmi/0006-arm64-renesas-defconfig-Disable-the-SCMI-power-domai.patch \
+"
+
 BBCLASSEXTEND = ""
 
 do_compile_kernelmodules:append () {
