@@ -8,10 +8,10 @@ PACKAGE_ARCH = "${MACHINE_ARCH}"
 
 inherit deploy
 
-PV:rcar-gen5:ironhide = "v2.14.0+upstream+git${SRCPV}"
+PV:rcar-gen5:ironhide = "v2.15.0+upstream+git${SRCPV}"
 BRANCH:rcar-gen5:ironhide = "master"
 SRC_URI = "git://github.com/ARM-software/arm-trusted-firmware.git;branch=${BRANCH};protocol=https"
-SRCREV:rcar-gen5:ironhide = "ea6625c639011747bf49ab2afc0ff4152320c4c3"
+SRCREV:rcar-gen5:ironhide = "da738d5eae93af342fdc4995dd3c05acb4c9d757"
 
 S = "${WORKDIR}/git"
 
