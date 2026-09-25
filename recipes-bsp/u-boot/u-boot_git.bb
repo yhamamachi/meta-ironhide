@@ -28,6 +28,13 @@ SRC_URI:append = "\
     file://mmc_boot.cfg \
     file://preboot.cfg \
 "
+SRC_URI:append = "\
+    file://scmi/0001-arm-dts-renesas-Drop-unreachable-high-DRAM-banks-on-.patch \
+    file://scmi/0002-firmware-scmi-Poll-the-shared-buffer-for-the-respons.patch \
+    file://scmi/0003-clk-renesas-Accept-the-SCP-firmware-SCMI-version.patch \
+    file://scmi/0004-power-domain-renesas-r8a78000-Accept-the-SCP-firmwar.patch \
+    file://scmi/0005-mailbox-renesas-Receive-and-clear-the-MFIS-doorbell.patch \
+"
 
 do_deploy:append() {
     if [ -n "${UBOOT_CONFIG}" ]
