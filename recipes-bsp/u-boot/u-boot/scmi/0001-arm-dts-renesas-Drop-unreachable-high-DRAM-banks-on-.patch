@@ -1,0 +1,51 @@
+From fdb19a127c5dce9218d4fd2689a9ca49b6352707 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Cl=C3=A9ment=20Le=20Goffic?= <clegoffic@baylibre.com>
+Date: Tue, 28 Jul 2026 15:05:55 +0200
+Subject: [PATCH 1/5] arm: dts: renesas: Drop unreachable high DRAM banks on
+ Ironhide
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The SCP maps a single 3 GiB DRAM window in the CMN mesh, so the high
+banks abort on access.
+U-Boot's EFI code allocates from the top of the last bank and dies with
+an async SError right after DM init.
+Keep only the low bank until the SCP programs the full DDR SAM.
+
+Co-developed-by: Claude Fable 5 <noreply@anthropic.com>
+Signed-off-by: Clément Le Goffic <clegoffic@baylibre.com>
+---
+ arch/arm/dts/r8a78000-ironhide-u-boot.dtsi | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/arch/arm/dts/r8a78000-ironhide-u-boot.dtsi b/arch/arm/dts/r8a78000-ironhide-u-boot.dtsi
+index 2dc8ad7aa6b..0adc12f59be 100644
+--- a/arch/arm/dts/r8a78000-ironhide-u-boot.dtsi
++++ b/arch/arm/dts/r8a78000-ironhide-u-boot.dtsi
+@@ -9,6 +9,22 @@
+ #include "r8a78000-u-boot.dtsi"
+ 
+ / {
++	/*
++	 * Only the low bank (0x60600000, ends at 0xC0000000) is reachable:
++	 * the SCP maps a single 3 GiB DRAM window (0x40000000) in the CMN
++	 * mesh, so any access to the high banks gets no route and raises an
++	 * async external abort (SError). Drop them until the SCP programs
++	 * the full DDR SAM.
++	 */
++	/delete-node/ memory@1080000000;
++	/delete-node/ memory@1200000000;
++	/delete-node/ memory@1400000000;
++	/delete-node/ memory@1600000000;
++	/delete-node/ memory@1800000000;
++	/delete-node/ memory@1a00000000;
++	/delete-node/ memory@1c00000000;
++	/delete-node/ memory@1e00000000;
++
+ 	aliases {
+ 		i2c0 = &i2c0;
+ 		i2c1 = &i2c1;
+-- 
+2.43.0
+

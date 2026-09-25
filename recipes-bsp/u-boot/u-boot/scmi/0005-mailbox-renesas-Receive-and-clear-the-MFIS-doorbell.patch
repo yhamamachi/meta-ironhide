@@ -1,0 +1,106 @@
+From 28a79f27092848c7ac4eb00ad6d413ff6e36ac84 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Cl=C3=A9ment=20Le=20Goffic?= <clegoffic@baylibre.com>
+Date: Mon, 24 Aug 2026 20:02:45 +0200
+Subject: [PATCH 5/5] mailbox: renesas: Receive and clear the MFIS doorbell
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The driver only maps its outgoing doorbell (EICR) and has no receive
+operation, so the doorbell the server sets for each response (IICR, the
+word just below) is never cleared.
+Every SCMI exchange leaves it set, and the stale bit fires as a
+spurious interrupt the moment Linux enables the MFIS channel, before
+the SCMI transport has finished its setup, which crashes the kernel.
+
+Map the channel from IICR so both doorbells are visible.
+Add a receive operation that reports the response once the doorbell is
+set and clears it, which also gives mbox_recv() a real wait instead of
+an immediate return.
+
+Co-developed-by: Claude Fable 5 <noreply@anthropic.com>
+Signed-off-by: Clément Le Goffic <clegoffic@baylibre.com>
+---
+ arch/arm/dts/r8a78000-u-boot.dtsi |  2 +-
+ drivers/mailbox/renesas-mfis.c    | 27 +++++++++++++++++++++------
+ 2 files changed, 22 insertions(+), 7 deletions(-)
+
+diff --git a/arch/arm/dts/r8a78000-u-boot.dtsi b/arch/arm/dts/r8a78000-u-boot.dtsi
+index 67da58f6474..d4b2cfc813d 100644
+--- a/arch/arm/dts/r8a78000-u-boot.dtsi
++++ b/arch/arm/dts/r8a78000-u-boot.dtsi
+@@ -88,7 +88,7 @@
+ 	mailbox: mfis_mbox@18842000 {
+ 		compatible = "renesas,mfis-mbox";
+ 		#mbox-cells = <1>;
+-		reg = <0 0x18842004 0 0x8>;
++		reg = <0 0x18842000 0 0x8>;
+ 		interrupts = <GIC_SPI 4362 IRQ_TYPE_LEVEL_HIGH>;
+ 	};
+ 
+diff --git a/drivers/mailbox/renesas-mfis.c b/drivers/mailbox/renesas-mfis.c
+index 19b801e56a6..4860eceef34 100644
+--- a/drivers/mailbox/renesas-mfis.c
++++ b/drivers/mailbox/renesas-mfis.c
+@@ -8,37 +8,52 @@
+ #include <linux/delay.h>
+ #include <mailbox-uclass.h>
+ 
+-#define COM		0x0
++#define IICR		0x0	/* remote-to-us doorbell */
++#define EICR		0x4	/* us-to-remote doorbell */
+ #define IIR		BIT(0)
+ 
+ struct mfis_priv {
+-	void __iomem	*tx_base;
++	void __iomem	*base;
+ };
+ 
+ static int mfis_send(struct mbox_chan *chan, const void *data)
+ {
+ 	struct mfis_priv *mfis = dev_get_priv(chan->dev);
+ 
+-	writel(IIR, mfis->tx_base + COM);
++	writel(IIR, mfis->base + EICR);
+ 
+ 	/* Give the remote side some time. */
+ 	mdelay(1);
+ 
+-	writel(0, mfis->tx_base + COM);
++	writel(0, mfis->base + EICR);
++
++	return 0;
++}
++
++static int mfis_recv(struct mbox_chan *chan, void *data)
++{
++	struct mfis_priv *mfis = dev_get_priv(chan->dev);
++
++	if (!(readl(mfis->base + IICR) & IIR))
++		return -ENODATA;
++
++	/* Consume the doorbell, or it fires as a spurious interrupt later */
++	writel(0, mfis->base + IICR);
+ 
+ 	return 0;
+ }
+ 
+ static const struct mbox_ops mfis_mbox_ops = {
+ 	.send		= mfis_send,
++	.recv		= mfis_recv,
+ };
+ 
+ static int mfis_mbox_probe(struct udevice *dev)
+ {
+ 	struct mfis_priv *mbox = dev_get_priv(dev);
+ 
+-	mbox->tx_base = dev_read_addr_index_ptr(dev, 0);
+-	if (!mbox->tx_base)
++	mbox->base = dev_read_addr_index_ptr(dev, 0);
++	if (!mbox->base)
+ 		return -ENODEV;
+ 
+ 	return 0;
+-- 
+2.43.0
+

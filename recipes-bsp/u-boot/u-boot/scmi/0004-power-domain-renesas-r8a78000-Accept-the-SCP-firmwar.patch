@@ -1,0 +1,54 @@
+From a6e2a6b0e334e691412f5410202144a0edd4ee1b Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Cl=C3=A9ment=20Le=20Goffic?= <clegoffic@baylibre.com>
+Date: Mon, 24 Aug 2026 18:29:05 +0200
+Subject: [PATCH 4/5] power: domain: renesas-r8a78000: Accept the SCP-firmware
+ SCMI version
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The Gen5 reset driver picks its DT to SCMI identifier map from the
+implementation version reported by the SCMI base protocol.
+Only the Renesas SDK releases are listed, so every other server is
+turned away with "Unsupported SCMI base protocol version".
+
+The Arm SCP-firmware server reports 0x02100000.
+Its identifier numbering was compared against the SDK 4.32 sources and
+found identical for all 815 reset domains.
+It can therefore share the map already used for SDK 4.32 instead of
+carrying a copy of it.
+
+The power domain path is not affected.
+It maps identifiers directly and does not read the version.
+
+Co-developed-by: Claude Fable 5 <noreply@anthropic.com>
+Signed-off-by: Clément Le Goffic <clegoffic@baylibre.com>
+---
+ drivers/power/domain/renesas-r8a78000-power-domain.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/power/domain/renesas-r8a78000-power-domain.c b/drivers/power/domain/renesas-r8a78000-power-domain.c
+index 62b56fd8ae0..e30a7fde58c 100644
+--- a/drivers/power/domain/renesas-r8a78000-power-domain.c
++++ b/drivers/power/domain/renesas-r8a78000-power-domain.c
+@@ -167,6 +167,7 @@ struct rst_map_in {
+ #define GEN5_SCMI_SDK_4_31		0x010d0000
+ #define GEN5_SCMI_SDK_4_32		0x010e0000
+ #define GEN5_SCMI_SDK_4_36		0x01100000
++#define GEN5_SCMI_SCP_FW_2_16		0x02100000
+ 
+ static const struct rst_map_in gen5_rst_map_dt_sdk_4_28[] = {
+ 	{ SCP_RESET_DOMAIN_ID_UFS0, 202 },
+@@ -222,7 +223,8 @@ static int gen5_reset_of_xlate(struct reset_ctl *reset_ctl,
+ 		map_size = ARRAY_SIZE(gen5_rst_map_dt_sdk_4_28);
+ 	} else if (priv->basever == GEN5_SCMI_SDK_4_31 ||
+ 		   priv->basever == GEN5_SCMI_SDK_4_32 ||
+-		   priv->basever == GEN5_SCMI_SDK_4_36) {
++		   priv->basever == GEN5_SCMI_SDK_4_36 ||
++		   priv->basever == GEN5_SCMI_SCP_FW_2_16) {
+ 		map = gen5_rst_map_dt_sdk_4_31;
+ 		map_size = ARRAY_SIZE(gen5_rst_map_dt_sdk_4_31);
+ 	} else {
+-- 
+2.43.0
+
