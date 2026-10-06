@@ -15,13 +15,13 @@ EXTRA_OEMAKE+=" ARCH=arm CROSS_COMPILE=arm-none-eabi- CC=arm-none-eabi-gcc"
 
 UBOOT_URL = "git://github.com/u-boot/u-boot.git"
 BRANCH = "main"
-SRCREV = "a06e89ab05eaa2b8344d521319399333cd760ae5"
+SRCREV = "5508406582f6f7120dce0c4b3059819a41788db2"
 LICENSE = "GPL-2.0-or-later"
 LIC_FILES_CHKSUM = "file://Licenses/README;md5=2ca5f2c35c8cc335f0a19756634782f1"
 
 SRC_URI = "${UBOOT_URL};branch=${BRANCH};protocol=https"
 
-PV = "v2026.10-rc5+git${SRCPV}"
+PV = "v2026.10+git${SRCPV}"
 
 SRC_URI:append = " \
     file://for-development.cfg \
